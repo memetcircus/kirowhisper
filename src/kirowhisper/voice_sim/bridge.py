@@ -53,18 +53,41 @@ class VoiceBridge:
     async def index(self, _request: Request):
         return FileResponse(_STATIC / "index.html")
 
+    def _ordered_pending(self) -> list[PendingDecision]:
+        pend = self._svc.ambient.pending_decisions()
+        pend.sort(key=lambda p: 0 if p.risk.level == RiskLevel.HIGH else 1)
+        return pend
+
+    def _describe_next(self) -> tuple[str, str | None]:
+        """Spoken description of the decision now in focus, and its request_id."""
+        pend = self._ordered_pending()
+        if not pend:
+            return "Nothing else needs you right now.", None
+        top = pend[0]
+        summary = self._svc.summarizer.approval_summary(top.approval, top.risk)
+        n = len(pend)
+        lead = "Next" if n == 1 else f"First of {n}"
+        prompt = "Confirm to proceed?" if top.risk.level == RiskLevel.HIGH else "Approve or reject?"
+        return f"{lead}: {summary} {prompt}", top.approval.request_id
+
     async def status(self, _request: Request):
         snap = self._svc.ambient.snapshot()
         try:
             gw = await self._svc.gateway.get_status()
         except GatewayError:
             gw = {}
-        spoken = self._svc.summarizer.ambient_summary(
+        headline = self._svc.summarizer.ambient_summary(
             auto_passed=snap.get(DecisionAction.AUTO_APPROVE.value, 0),
             blocked=snap.get(DecisionAction.AUTO_BLOCK.value, 0),
             surfaced=snap.get("pending", 0),
         )
-        return JSONResponse({"spoken": spoken, "snapshot": snap, "sessions": gw.get("sessions")})
+        # After the headline, read the first decision so the user knows what
+        # "approve" / "reject" will act on — no need to name an index.
+        detail, rid = self._describe_next()
+        spoken = headline if rid is None else f"{headline} {detail}"
+        return JSONResponse(
+            {"spoken": spoken, "current": rid, "snapshot": snap, "sessions": gw.get("sessions")}
+        )
 
     async def pending(self, _request: Request):
         pend = self._svc.ambient.pending_decisions()
@@ -96,11 +119,20 @@ class VoiceBridge:
         try:
             await self._svc.gateway.approve(pending.approval.slot, rid)
         except GatewayError as exc:
+            # A "no pending approval" 404 means it was already resolved/timed out
+            # (a stale ghost). Drop it and move on rather than re-queue it.
+            if "no pending approval" in str(exc).lower() or "404" in str(exc):
+                nxt, nxt_id = self._describe_next()
+                return JSONResponse(
+                    {"spoken": f"That one was already handled. {nxt}", "ok": False,
+                     "current": nxt_id}
+                )
             self._svc.ambient.requeue(pending)
-            return JSONResponse({"spoken": f"I couldn't apply it: {exc}", "ok": False})
+            return JSONResponse({"spoken": "I couldn't apply it, it's still pending.", "ok": False})
         self._svc.audit.record(rid, pending.risk.level, DecisionAction.AUTO_APPROVE,
                                "user approved", by="user")
-        return JSONResponse({"spoken": "Approved. Continuing.", "ok": True})
+        nxt, nxt_id = self._describe_next()
+        return JSONResponse({"spoken": f"Approved. {nxt}", "ok": True, "current": nxt_id})
 
     async def reject(self, request: Request):
         body = await _json(request)
@@ -111,11 +143,18 @@ class VoiceBridge:
         try:
             await self._svc.gateway.reject(pending.approval.slot, rid)
         except GatewayError as exc:
+            if "no pending approval" in str(exc).lower() or "404" in str(exc):
+                nxt, nxt_id = self._describe_next()
+                return JSONResponse(
+                    {"spoken": f"That one was already handled. {nxt}", "ok": False,
+                     "current": nxt_id}
+                )
             self._svc.ambient.requeue(pending)
-            return JSONResponse({"spoken": f"I couldn't apply it: {exc}", "ok": False})
+            return JSONResponse({"spoken": "I couldn't apply it, it's still pending.", "ok": False})
         self._svc.audit.record(rid, pending.risk.level, DecisionAction.AUTO_BLOCK,
                                "user rejected", by="user")
-        return JSONResponse({"spoken": "I didn't do it. The task can continue.", "ok": True})
+        nxt, nxt_id = self._describe_next()
+        return JSONResponse({"spoken": f"I didn't do it. {nxt}", "ok": True, "current": nxt_id})
 
     async def trust(self, _request: Request):
         self._svc.ambient.set_session_trust(True)

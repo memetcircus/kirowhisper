@@ -124,26 +124,68 @@ class GatewayClient:
         return await self._get("/api/status")
 
     async def list_pending_approvals(self) -> list[Approval]:
-        """GET /api/approvals — all pending approvals, mapped to Approval."""
+        """All pending approvals from BOTH sources, de-duplicated by request_id.
+
+        Two places carry pending approvals (verified live):
+          - ``GET /api/approvals`` — mostly subagent/background approvals.
+          - each chat slot's ``role:"permission"`` message — interactive chat/task
+            approvals that do NOT appear in /api/approvals.
+        The ambient engine needs both, so we merge them.
+        """
+        found: dict[str, Approval] = {}
+
         raw = await self._get("/api/approvals")
-        entries = raw if isinstance(raw, list) else []
-        return [Approval.from_approvals_entry(e) for e in entries]
+        for entry in raw if isinstance(raw, list) else []:
+            ap = Approval.from_approvals_entry(entry)
+            if ap.request_id:
+                found[ap.request_id] = ap
+
+        for slot in await self.list_slots():
+            ap = await self.get_slot_pending_approval(slot)
+            if ap is not None and ap.request_id not in found:
+                found[ap.request_id] = ap
+
+        return list(found.values())
+
+    async def list_slots(self) -> list[str]:
+        """GET /api/chat/slots — the keys of all active chat slots."""
+        raw = await self._get("/api/chat/slots")
+        if isinstance(raw, list):
+            slots = raw
+        elif isinstance(raw, dict):
+            slots = raw.get("slots", [])
+        else:
+            slots = []
+        keys: list[str] = []
+        for s in slots:
+            if isinstance(s, dict):
+                key = s.get("key") or s.get("name")
+                if key:
+                    keys.append(str(key))
+            elif isinstance(s, str):
+                keys.append(s)
+        return keys
 
     async def get_slot(self, slot: str) -> dict[str, Any]:
         """GET /api/chat/slots/<slot> — full slot object incl. messages."""
         return await self._get(f"/api/chat/slots/{slot}")
 
     async def get_slot_pending_approval(self, slot: str) -> Approval | None:
-        """Extract the most recent pending permission approval from a slot's messages.
+        """Extract the most recent UNRESOLVED permission approval from a slot.
 
-        The reliable signal (spike) is a message with role=='permission' carrying
-        meta.approval_id — NOT the slot's ``pending_approval`` field.
+        The reliable signal (verified live) is a message with role=='permission'
+        carrying meta.approval_id AND an empty meta.resolved. A permission whose
+        meta.resolved is set (e.g. "approved"/"rejected"/"stale") is already
+        handled and must NOT be surfaced again, or approving it 404s with
+        "no pending approval".
         """
         slot_obj = await self.get_slot(slot)
         messages = slot_obj.get("messages", [])
         for msg in reversed(messages):
             if msg.get("role") == "permission":
                 meta = msg.get("meta", {}) or {}
+                if str(meta.get("resolved") or "").strip():
+                    continue  # already resolved -> not pending
                 approval = Approval.from_permission_meta(slot, msg.get("content", ""), meta)
                 if approval.request_id:
                     return approval

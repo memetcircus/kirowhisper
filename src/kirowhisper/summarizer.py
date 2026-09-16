@@ -90,16 +90,24 @@ class Summarizer:
 
     def ambient_summary(self, *, auto_passed: int, blocked: int, surfaced: int) -> str:
         """How Ambient Awareness handled the noise (e.g. 'I passed 19...')."""
-        parts = []
+        handled = []
         if auto_passed:
-            parts.append(f"passed {auto_passed} as safe")
+            handled.append(f"passed {auto_passed} as safe")
         if blocked:
-            parts.append(f"blocked {blocked}")
+            handled.append(f"blocked {blocked}")
+
+        tail = ""
         if surfaced:
-            parts.append(f"{surfaced} waiting for you")
-        if not parts:
-            return "No decisions to report."
-        return "I " + _join_spoken(parts) + "."
+            n = surfaced
+            tail = f"{n} decision{'s' if n != 1 else ''} {'are' if n != 1 else 'is'} waiting for you"
+
+        if handled and tail:
+            return "I " + _join_spoken(handled) + f", and {tail}."
+        if handled:
+            return "I " + _join_spoken(handled) + "."
+        if tail:
+            return tail[0].upper() + tail[1:] + "."
+        return "No decisions to report."
 
 
 # ── helpers ──

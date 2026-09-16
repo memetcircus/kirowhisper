@@ -48,7 +48,8 @@
 <body>
   <div class="badge">Simulated Alexa+ · real MCP + Kiro Crew backend</div>
   <h1>KiroWhisper</h1>
-  <div class="sub">Tap the ring and speak. Try: “what's up?”, “approve”, “no”.</div>
+  <div class="sub">Tap the ring ONCE to start hands-free listening, then just talk:
+    “what's up?” … “approve” … “no”. Tap again to stop.</div>
 
   <div id="ring" class="ring idle" title="Tap to talk"><span class="mic">🎙️</span></div>
   <div id="transcript" class="transcript"></div>
@@ -79,11 +80,19 @@ function speak(text) {
   try {
     const u = new SpeechSynthesisUtterance(text);
     u.rate = 1.05;
+    // Pause listening while we speak so the system doesn't hear its own voice.
+    speaking = true;
+    try { if (recog) recog.stop(); } catch (e) {}
     setRing('speaking');
-    u.onend = () => setRing('idle');
+    u.onend = () => {
+      speaking = false;
+      // Resume hands-free listening after we finish speaking.
+      if (listening) { setRing('listening'); try { recog.start(); } catch (e) {} }
+      else { setRing('idle'); }
+    };
     speechSynthesis.cancel();
     speechSynthesis.speak(u);
-  } catch (e) { setRing('idle'); }
+  } catch (e) { speaking = false; setRing(listening ? 'listening' : 'idle'); }
 }
 
 // ---- Backend calls ----
@@ -158,24 +167,39 @@ function handle(text) {
 // ---- Speech recognition (user's own voice) ----
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recog = null;
+let listening = false;   // hands-free session on/off
+let speaking = false;    // true while TTS plays (so we don't hear ourselves)
+
 if (SR) {
   recog = new SR();
   recog.lang = 'en-US';
   recog.interimResults = false;
   recog.maxAlternatives = 1;
-  recog.onstart = () => setRing('listening');
-  recog.onerror = () => setRing('idle');
-  recog.onend = () => { if (ring.className.includes('listening')) setRing('idle'); };
+  recog.continuous = true;   // keep listening across utterances
+
+  recog.onstart = () => { if (!speaking) setRing('listening'); };
+  recog.onerror = (e) => { if (e.error === 'no-speech') return; };
+  recog.onend = () => {
+    // Auto-restart while the hands-free session is on (unless we're speaking).
+    if (listening && !speaking) { try { recog.start(); } catch (e) {} }
+  };
   recog.onresult = (e) => {
-    const text = e.results[0][0].transcript;
-    setRing('idle');
-    handle(text);
+    const text = e.results[e.results.length - 1][0].transcript.trim();
+    if (text) handle(text);
   };
 }
-ring.onclick = () => {
-  if (!recog) { speak("Speech recognition isn't available in this browser. Use the buttons."); return; }
-  try { recog.start(); } catch (e) { /* already started */ }
-};
+
+function startListening() {
+  if (!recog) { speak("Speech recognition isn't available. Use Chrome, or the buttons."); return; }
+  listening = true;
+  try { recog.start(); } catch (e) {}
+}
+function stopListening() {
+  listening = false;
+  try { recog.stop(); } catch (e) {}
+  setRing('idle');
+}
+ring.onclick = () => { listening ? stopListening() : startListening(); };
 
 // ---- Proactive surfaces via SSE (the colleague calls you) ----
 try {
