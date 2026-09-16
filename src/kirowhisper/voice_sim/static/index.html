@@ -63,6 +63,22 @@
   </div>
 
 <script>
+// ==== HARD DISABLE browser text-to-speech ====================================
+// The demo speaks ONLY through the server (macOS `say`). Neutralize the browser
+// speech API entirely so nothing — not our code, not a stray call — can ever
+// produce a second voice, regardless of how it's invoked.
+try {
+  if ('speechSynthesis' in window) {
+    speechSynthesis.cancel();
+    speechSynthesis.speak = function () {};   // no-op: browser can never speak
+  }
+  if ('SpeechSynthesisUtterance' in window) {
+    // Keep the constructor valid but harmless.
+    window.SpeechSynthesisUtterance = function () { return {}; };
+  }
+} catch (e) {}
+// ============================================================================
+
 const ring = document.getElementById('ring');
 const transcriptEl = document.getElementById('transcript');
 const sayEl = document.getElementById('say');
@@ -83,34 +99,36 @@ function speak(text) {
   setRing('speaking');
 
   const resume = () => {
-    speaking = false;
-    if (listening) { setRing('listening'); try { recog.start(); } catch (e) {} }
-    else { setRing('idle'); }
+    // Wait a beat AFTER the voice finishes before re-opening the mic, so the tail
+    // of our own speech doesn't get picked up as a new command (echo loop).
+    setTimeout(() => {
+      speaking = false;
+      if (listening) { setRing('listening'); safeStart(); }
+      else { setRing('idle'); }
+    }, 700);
   };
 
-  // Primary: reliable server-side TTS (macOS `say`). Fall back to browser TTS.
+  // Hard-silence ANY browser speech, every time. The server (macOS `say`) is the
+  // one and only voice — browser speechSynthesis is never used for the demo.
+  killBrowserSpeech();
+
+  // Server-side TTS is the ONLY voice. If the server has no engine, we just
+  // show the text (no browser voice) so two voices can never overlap.
   fetch('/api/speak', { method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ text }) })
     .then(r => r.json())
-    .then(res => { if (!res.ok) browserSpeak(text, resume); else resume(); })
-    .catch(() => browserSpeak(text, resume));
+    .then(() => resume())
+    .catch(() => resume());
 }
 
-function browserSpeak(text, done) {
-  if (!('speechSynthesis' in window)) { done(); return; }
+// Cancel and disable browser TTS so it can never speak alongside the server.
+function killBrowserSpeech() {
   try {
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1.05; u.lang = 'en-US';
-    u.onend = done; u.onerror = done;
-    speechSynthesis.speak(u);
-    setTimeout(() => { try { speechSynthesis.resume(); } catch (e) {} }, 120);
-  } catch (e) { done(); }
-}
-
-if ('speechSynthesis' in window) {
-  speechSynthesis.getVoices();
-  speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
+    if ('speechSynthesis' in window) {
+      speechSynthesis.cancel();
+      speechSynthesis.cancel();  // some Chrome builds need a second cancel
+    }
+  } catch (e) {}
 }
 
 // ---- Backend calls ----
@@ -161,25 +179,37 @@ async function askStatus() { const res = await getJSON('/api/status'); speak(res
 async function doTrust() { const res = await postJSON('/api/trust', {}); speak(res.spoken); }
 
 // ---- Intent handling from voice ----
+let lastHandledText = '';
+let lastHandledAt = 0;
+
 function handle(text) {
+  // Never act on anything captured while our own voice is playing (echo guard).
+  if (speaking) return;
+  // Don't process the exact same phrase twice in a row within 2s (dedup).
+  const now = Date.now();
+  if (text === lastHandledText && now - lastHandledAt < 2000) return;
+  lastHandledText = text;
+  lastHandledAt = now;
+
   const t = text.toLowerCase().trim();
   transcriptEl.textContent = '“' + text + '”';
 
-  if (/(status|what.?s up|what is up|ne durum|report|standup)/.test(t)) return askStatus();
-  if (/(trust|always approve|hep onayla)/.test(t)) return doTrust();
+  if (/(status|what.?s up|what is up|whatsapp|ne durum|report|standup)/.test(t)) return askStatus();
+  if (/\b(trust|always approve|hep onayla)\b/.test(t)) return doTrust();
 
-  // approval intents
-  if (/(approve|yes|confirm|do it|go ahead)/.test(t)) {
+  // approval intents — require whole-word matches so stray audio can't trigger them
+  if (/\b(approve|approved|yes|yeah|confirm|do it|go ahead)\b/.test(t)) {
     const rid = awaitingConfirm || topRequestId;
     if (!rid) return speak("There's nothing waiting for you.");
     return doApprove(rid, /* confirmed */ awaitingConfirm ? true : false);
   }
-  if (/(reject|no|skip|don.?t|stop)/.test(t)) {
+  if (/\b(reject|rejected|no|nope|skip|deny)\b/.test(t)) {
     const rid = topRequestId;
-    if (!rid) return speak("There's nothing to reject.");
+    if (!rid) return;  // silently ignore — do NOT speak, or we loop on our own voice
     return doReject(rid);
   }
-  speak("I heard: " + text + ". Try asking what's up, or approve, or no.");
+  // Unknown phrase: show it on screen but stay silent to avoid an echo loop.
+  transcriptEl.textContent = '“' + text + '” — say “what\u2019s up”, “approve”, or “reject”.';
 }
 
 // ---- Speech recognition (user's own voice) ----
@@ -188,48 +218,51 @@ let recog = null;
 let listening = false;   // hands-free session on/off
 let speaking = false;    // true while TTS plays (so we don't hear ourselves)
 
+let recogRunning = false;   // true between onstart and onend, so we never double-start
+
+function safeStart() {
+  if (!recog || recogRunning || speaking || !listening) return;
+  try { recog.start(); } catch (e) { /* already started */ }
+}
+
 if (SR) {
   recog = new SR();
   recog.lang = 'en-US';
-  recog.interimResults = false;
+  recog.interimResults = true;   // stream partials so we can show + wait for the final
   recog.maxAlternatives = 1;
-  recog.continuous = true;   // keep listening across utterances
+  recog.continuous = true;       // keep listening across utterances
 
-  recog.onstart = () => { if (!speaking) setRing('listening'); };
-  recog.onerror = (e) => { if (e.error === 'no-speech') return; };
+  recog.onstart = () => { recogRunning = true; if (!speaking) setRing('listening'); };
+  recog.onerror = (e) => { /* no-speech/aborted are normal; onend will restart */ };
   recog.onend = () => {
+    recogRunning = false;
     // Auto-restart while the hands-free session is on (unless we're speaking).
-    if (listening && !speaking) { try { recog.start(); } catch (e) {} }
+    if (listening && !speaking) safeStart();
   };
   recog.onresult = (e) => {
-    const text = e.results[e.results.length - 1][0].transcript.trim();
-    if (text) handle(text);
+    if (speaking) return;  // ignore anything captured while our own voice plays
+    const r = e.results[e.results.length - 1];
+    const text = r[0].transcript.trim();
+    if (!text) return;
+    // Always show what we're hearing, even interim, so the user sees progress.
+    transcriptEl.textContent = '“' + text + '”';
+    // Only ACT on a final result, so we don't fire on a half-heard "app"/"re".
+    if (r.isFinal) handle(text);
   };
-}
-
-let ttsUnlocked = false;
-function unlockTTS() {
-  // Browsers block speechSynthesis until a user gesture. Speak an empty
-  // utterance inside the click so later (programmatic) speech is allowed.
-  if (ttsUnlocked) return;
-  try {
-    const u = new SpeechSynthesisUtterance(' ');
-    u.volume = 0;
-    speechSynthesis.speak(u);
-    ttsUnlocked = true;
-  } catch (e) {}
 }
 
 function startListening() {
-  unlockTTS();  // this runs inside the ring click (a user gesture)
+  killBrowserSpeech();  // ensure the browser never speaks; server `say` is the only voice
   if (!recog) { speak("Speech recognition isn't available. Use Chrome, or the buttons."); return; }
   listening = true;
-  try { recog.start(); } catch (e) {}
-  speak("Listening.");   // immediate audible confirmation that sound works
+  // Speak the confirmation first; resume() will open the mic once the voice ends,
+  // so we never start recognition and then immediately stop it for the greeting.
+  speak("Listening.");
 }
 function stopListening() {
   listening = false;
-  try { recog.stop(); } catch (e) {}
+  try { recog.abort(); } catch (e) {}
+  recogRunning = false;
   setRing('idle');
 }
 ring.onclick = () => { listening ? stopListening() : startListening(); };
