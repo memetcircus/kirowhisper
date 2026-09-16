@@ -142,12 +142,12 @@ function handle(text) {
   if (/(trust|always approve|hep onayla)/.test(t)) return doTrust();
 
   // approval intents
-  if (/(approve|yes|confirm|onayla|evet|do it|go ahead)/.test(t)) {
+  if (/(approve|yes|confirm|do it|go ahead)/.test(t)) {
     const rid = awaitingConfirm || topRequestId;
     if (!rid) return speak("There's nothing waiting for you.");
     return doApprove(rid, /* confirmed */ awaitingConfirm ? true : false);
   }
-  if (/(reject|no|skip|don.?t|hayır|stop)/.test(t)) {
+  if (/(reject|no|skip|don.?t|stop)/.test(t)) {
     const rid = topRequestId;
     if (!rid) return speak("There's nothing to reject.");
     return doReject(rid);
