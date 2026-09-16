@@ -157,6 +157,10 @@ class AmbientEngine:
         """Enable/disable auto-approval of low-risk steps for this session."""
         self._session_trust = trust
 
+    def set_on_surface(self, callback: SurfaceCallback) -> None:
+        """Register the proactive callback fired when a decision is surfaced."""
+        self._on_surface = callback
+
     def snapshot(self) -> dict[str, int]:
         """Counts by action since start (source of the ambient summary)."""
         snap = dict(self._counts)

@@ -50,3 +50,12 @@ def build_app(config: Config | None = None, *, use_bedrock: bool = True):
     """Build the MCP server ready to run over Streamable HTTP."""
     services = build_services(config, use_bedrock=use_bedrock)
     return build_server(services), services
+
+
+def build_voice_app(config: Config | None = None, *, use_bedrock: bool = True):
+    """Build the voice-simulation web app (JSON bridge + UI) and its services."""
+    from .voice_sim.bridge import VoiceBridge
+
+    services = build_services(config, use_bedrock=use_bedrock)
+    bridge = VoiceBridge(services)
+    return bridge.app(), services

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KiroWhisper — voice oversight (simulated Alexa+)</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.5rem;
+    background: #0b0d12; color: #e8eaf0;
+    font: 16px/1.5 -apple-system, system-ui, sans-serif;
+  }
+  .badge { position: fixed; top: 12px; left: 12px; font-size: 12px; color: #8a90a0;
+    border: 1px solid #2a2f3a; padding: 4px 8px; border-radius: 6px; }
+  h1 { font-weight: 600; font-size: 1.4rem; margin: 0; }
+  .sub { color: #8a90a0; margin-top: -0.5rem; }
+  /* light ring */
+  .ring {
+    width: 160px; height: 160px; border-radius: 50%;
+    background: radial-gradient(circle at 50% 50%, #12151c 55%, transparent 56%);
+    border: 6px solid #2a2f3a; transition: border-color .3s, box-shadow .3s;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .ring.idle { border-color: #3a4152; }
+  .ring.listening { border-color: #4da3ff; box-shadow: 0 0 32px #4da3ff66; }
+  .ring.speaking { border-color: #4dffa3; box-shadow: 0 0 32px #4dffa366; }
+  .ring.alert { border-color: #ffcc4d; box-shadow: 0 0 40px #ffcc4d88; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.04)} }
+  .mic { font-size: 2.5rem; }
+  .transcript { min-height: 1.5rem; color: #b7bccb; font-style: italic; }
+  .say { max-width: 640px; text-align: center; font-size: 1.15rem; padding: 0 1rem; }
+  .pending { max-width: 640px; width: 90%; }
+  .pending h2 { font-size: .85rem; color: #8a90a0; text-transform: uppercase;
+    letter-spacing: .05em; }
+  .item { border: 1px solid #2a2f3a; border-radius: 8px; padding: .6rem .8rem;
+    margin: .4rem 0; display: flex; gap: .6rem; align-items: center; }
+  .risk { font-size: .7rem; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
+  .risk.high { background: #4a1f1f; color: #ff9d9d; }
+  .risk.low { background: #1f4a2f; color: #9dffb8; }
+  .risk.unknown { background: #4a421f; color: #ffe89d; }
+  .hint { color: #6a7080; font-size: .85rem; }
+  button.cmd { background: #1a1f2a; color: #e8eaf0; border: 1px solid #3a4152;
+    border-radius: 6px; padding: .3rem .6rem; cursor: pointer; font-size: .8rem; }
+</style>
+</head>
+<body>
+  <div class="badge">Simulated Alexa+ · real MCP + Kiro Crew backend</div>
+  <h1>KiroWhisper</h1>
+  <div class="sub">Tap the ring and speak. Try: “what's up?”, “approve”, “no”.</div>
+
+  <div id="ring" class="ring idle" title="Tap to talk"><span class="mic">🎙️</span></div>
+  <div id="transcript" class="transcript"></div>
+  <div id="say" class="say"></div>
+
+  <div class="pending">
+    <h2>Waiting for you</h2>
+    <div id="pendingList"></div>
+    <div class="hint">Say “approve” / “yes” to approve the top item, “no” / “reject” to skip.
+      High-risk items ask you to confirm.</div>
+  </div>
+
+<script>
+const ring = document.getElementById('ring');
+const transcriptEl = document.getElementById('transcript');
+const sayEl = document.getElementById('say');
+const pendingList = document.getElementById('pendingList');
+
+let topRequestId = null;      // the request_id of the first pending item
+let awaitingConfirm = null;   // request_id awaiting high-risk confirmation
+
+function setRing(state) { ring.className = 'ring ' + state; }
+
+// ---- Text to speech (system's voice) ----
+function speak(text) {
+  if (!text) return;
+  sayEl.textContent = text;
+  try {
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.05;
+    setRing('speaking');
+    u.onend = () => setRing('idle');
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  } catch (e) { setRing('idle'); }
+}
+
+// ---- Backend calls ----
+async function getJSON(url) { const r = await fetch(url); return r.json(); }
+async function postJSON(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body || {}) });
+  return r.json();
+}
+
+async function refreshPending() {
+  const data = await getJSON('/api/pending');
+  const items = data.pending || [];
+  topRequestId = items.length ? items[0].request_id : null;
+  pendingList.innerHTML = '';
+  if (!items.length) {
+    pendingList.innerHTML = '<div class="hint">Nothing needs you right now.</div>';
+    return;
+  }
+  for (const it of items) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = `<span class="risk ${it.risk}">${it.risk}</span>
+      <span style="flex:1">${it.spoken}</span>`;
+    const ok = document.createElement('button'); ok.className='cmd'; ok.textContent='approve';
+    ok.onclick = () => doApprove(it.request_id);
+    const no = document.createElement('button'); no.className='cmd'; no.textContent='reject';
+    no.onclick = () => doReject(it.request_id);
+    div.append(ok, no);
+    pendingList.appendChild(div);
+  }
+}
+
+async function doApprove(rid, confirmed=false) {
+  const res = await postJSON('/api/approve', { request_id: rid, confirmed });
+  if (res.needs_confirmation) { awaitingConfirm = rid; }
+  else { awaitingConfirm = null; }
+  speak(res.spoken);
+  refreshPending();
+}
+async function doReject(rid) {
+  const res = await postJSON('/api/reject', { request_id: rid });
+  awaitingConfirm = null;
+  speak(res.spoken);
+  refreshPending();
+}
+async function askStatus() { const res = await getJSON('/api/status'); speak(res.spoken); }
+async function doTrust() { const res = await postJSON('/api/trust', {}); speak(res.spoken); }
+
+// ---- Intent handling from voice ----
+function handle(text) {
+  const t = text.toLowerCase().trim();
+  transcriptEl.textContent = '“' + text + '”';
+
+  if (/(status|what.?s up|what is up|ne durum|report|standup)/.test(t)) return askStatus();
+  if (/(trust|always approve|hep onayla)/.test(t)) return doTrust();
+
+  // approval intents
+  if (/(approve|yes|confirm|onayla|evet|do it|go ahead)/.test(t)) {
+    const rid = awaitingConfirm || topRequestId;
+    if (!rid) return speak("There's nothing waiting for you.");
+    return doApprove(rid, /* confirmed */ awaitingConfirm ? true : false);
+  }
+  if (/(reject|no|skip|don.?t|hayır|stop)/.test(t)) {
+    const rid = topRequestId;
+    if (!rid) return speak("There's nothing to reject.");
+    return doReject(rid);
+  }
+  speak("I heard: " + text + ". Try asking what's up, or approve, or no.");
+}
+
+// ---- Speech recognition (user's own voice) ----
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null;
+if (SR) {
+  recog = new SR();
+  recog.lang = 'en-US';
+  recog.interimResults = false;
+  recog.maxAlternatives = 1;
+  recog.onstart = () => setRing('listening');
+  recog.onerror = () => setRing('idle');
+  recog.onend = () => { if (ring.className.includes('listening')) setRing('idle'); };
+  recog.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    setRing('idle');
+    handle(text);
+  };
+}
+ring.onclick = () => {
+  if (!recog) { speak("Speech recognition isn't available in this browser. Use the buttons."); return; }
+  try { recog.start(); } catch (e) { /* already started */ }
+};
+
+// ---- Proactive surfaces via SSE (the colleague calls you) ----
+try {
+  const es = new EventSource('/events');
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    setRing('alert');
+    speak("KiroWhisper: " + data.spoken);
+    refreshPending();
+  };
+} catch (e) { /* SSE optional */ }
+
+refreshPending();
+setInterval(refreshPending, 5000);
+</script>
+</body>
+</html>
