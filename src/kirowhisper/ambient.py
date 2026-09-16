@@ -149,6 +149,14 @@ class AmbientEngine:
         """Remove and return a surfaced decision once the user acts on it."""
         return self._pending.pop(request_id, None)
 
+    def requeue(self, pending: PendingDecision) -> None:
+        """Put a surfaced decision back (e.g. awaiting confirmation or a failed resolve)."""
+        self._pending[pending.approval.request_id] = pending
+
+    def set_session_trust(self, trust: bool) -> None:
+        """Enable/disable auto-approval of low-risk steps for this session."""
+        self._session_trust = trust
+
     def snapshot(self) -> dict[str, int]:
         """Counts by action since start (source of the ambient summary)."""
         snap = dict(self._counts)
