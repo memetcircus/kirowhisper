@@ -1,5 +1,5 @@
-"""Spike 3b: slot mesajlarından bekleyen permission'i (approval_id) oku ve
-/api/chat/slots/{slot}/approve ile ONAYLA. Sonra dosya gerçekten oluştu mu bak.
+"""Spike 3b: read the pending permission (approval_id) from slot messages and
+APPROVE via /api/chat/slots/{slot}/approve. Then check the file was really created.
 """
 import json
 import subprocess
@@ -42,7 +42,7 @@ def find_pending_approval():
     return None, None, None
 
 
-print("=== bekleyen onayı bul ===")
+print("=== find the pending approval ===")
 aid, content, meta = find_pending_approval()
 print("approval_id:", aid)
 print("tool:", content)
@@ -51,27 +51,27 @@ print("purpose/input:", str(meta.get("tool_input"))[:120] if meta else None,
       "| shell:", meta.get("is_shell") if meta else None)
 
 if not aid:
-    print("!! bekleyen onay yok (belki timeout'la deny oldu). Dur.")
+    print("!! no pending approval (maybe it timed out and was denied). Stopping.")
     raise SystemExit(0)
 
-print("\n=== APPROVE gönder (action=approve, request_id=approval_id) ===")
+print("\n=== send APPROVE (action=approved, request_id=approval_id) ===")
 try:
-    r = post(f"/api/chat/slots/{SLOT}/approve", {"action": "approve", "request_id": aid})
-    print("approve yanıtı:", str(r)[:250])
+    r = post(f"/api/chat/slots/{SLOT}/approve", {"action": "approved", "request_id": aid})
+    print("approve response:", str(r)[:250])
 except Exception as e:
-    print("approve HATA:", repr(e)[:300])
+    print("approve ERROR:", repr(e)[:300])
 
-print("\n=== 8sn bekle, dosya gerçekten oluştu mu? ===")
+print("\n=== wait 8s, was the file really created? ===")
 time.sleep(8)
 f = Path.home() / ".kiro" / "crew" / "workspace" / "spike_hello.txt"
-print("dosya var mı:", f.exists())
+print("file exists:", f.exists())
 if f.exists():
-    print("içerik:", repr(f.read_text()))
+    print("content:", repr(f.read_text()))
 
 slot = get(f"/api/chat/slots/{SLOT}")
 print("running:", slot.get("running"))
-# son tool/asistan mesajı
+# last tool/assistant message
 for m in reversed(slot.get("messages", [])):
     if m.get("role") in ("assistant", "tool"):
-        print("son mesaj:", m.get("role"), "->", str(m.get("content"))[:150])
+        print("last message:", m.get("role"), "->", str(m.get("content"))[:150])
         break

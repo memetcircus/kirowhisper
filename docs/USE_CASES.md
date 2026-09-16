@@ -1,205 +1,210 @@
 # KiroWhisper — Use Cases
 
-> Bu doküman KiroWhisper'ın kullanım senaryolarını tanımlar. Requirement'lar
-> (user story + acceptance criteria) buradan türeyecek. Her use case'te:
-> aktör, tetikleyici, akış, **spike-gerçekliği** (canlı testte ne kanıtlandı) ve
-> **öncelik** var.
->
-> Kaynaklar: PROJECT_NOTES.md (araştırma + Crew spike sonuçları), Emerson Q&A
-> (simülasyon), Devpost jüri sinyalleri, accessibility araştırması (MS Research,
-> arXiv 2506.13270).
+> This document defines KiroWhisper's usage scenarios. Requirements (user story +
+> acceptance criteria) derive from here. Each use case lists: actor, trigger,
+> flow, **spike-reality** (what the live test proved), and **priority**.
 
 ---
 
-## 0. Kimlik: KiroWhisper nedir (tek cümle)
+## 0. Identity: what KiroWhisper is (one sentence)
 
-Otonom çalışan Kiro Crew'i, **ekrana bakmadan sesle denetleyen bir meslektaş** —
-gürültüyü senin yerine süzer, sadece gerçek kararı getirir, gerisini güvenle halleder.
+A **colleague that lets you oversee the autonomous Kiro Crew by voice, without
+looking at a screen** — it filters the noise for you, surfaces only the real
+decision, and handles the rest safely.
 
-**Araç değil, meslektaş.** Emir-itaat eden bir asistan değil; yan odanda çalışan,
-gerektiğinde sana danışan, danışmadığında güvenle ilerleyen bir ekip arkadaşı.
+**A colleague, not a tool.** Not a command-obeying assistant; a teammate working
+in the next room that consults you when needed and proceeds safely when it doesn't.
 
 ## Persona
-- **Deniz** — görme engelli, home-office geliştirici. Masada sürekli oturmaz.
-  Ekran okuyucu kullanıyor ama uzun agent çıktılarını/onaylarını sesle tek tek
-  gezmek işkence. Ana kalp.
-- **Curb-cut genişlemesi** — ekrandan uzaktaki herkes (kahvaltı, mutfak, eller/gözler meşgul).
+- **Deniz** — a blind, home-office developer. Doesn't sit at the desk continuously.
+  Uses a screen reader, but stepping through long agent output/approvals by voice
+  one by one is torture. The core heart.
+- **Curb-cut expansion** — anyone away from the screen (breakfast, kitchen, hands/eyes busy).
 
-## Değer hiyerarşisi (KESİN)
-1. TEKNİK: Ambient Awareness (akıllı filtre + risk sınıflandırma) + güvenli onay.
-2. DENEYİM: iki yönlü "canlı meslektaş" hissi, ekransız.
-3. ASALET: görme engelli geliştirici için gerçek erişilebilirlik (curb-cut).
+## Value hierarchy (fixed)
+1. TECHNICAL: Ambient Awareness (smart filter + risk classification) + safe approval.
+2. EXPERIENCE: the two-way "live colleague" feel, eyes-free.
+3. DIGNITY: genuine accessibility for a blind developer (curb-cut).
 
-## Rekabet farkı (net tutulacak)
-"Sesle coding" ARTIK COMMODITY (ChatGPT Voice→Codex, Google Antigravity). Bizim
-farkımız SESLE KOD YAZMAK DEĞİL. Farkımız:
-(a) accessibility-first (görme engelli, gerçek dert — MS Research + arXiv doğruluyor),
-(b) ekransız/uzaktan OTONOM DENETİM (masada değilken, Echo ile),
-(c) Ambient Awareness: gürültüyü süzen, sadece gerçek kararı getiren güvenli filtre.
-
----
-
-# ⭐ KESKİN UÇ — Ambient Awareness (projenin kimliği)
-
-> Bu, projeyi "MCP wrapper"dan "creative agentic add-on"a taşıyan yetenek.
-> Demo bunun üzerine kurulur, submission başlığı budur. UC-1..12 bunun altyapısı.
-
-## Problem (neden zorunlu)
-Otonom agent saatlerce çalışırken DÜZİNELERCE onay noktasına takılır (dosya oluştur,
-test çalıştır, paket kur, satır sil...). Hepsi sese gelirse KiroWhisper işkenceye
-döner — çünkü SES, EKRAN GİBİ TARANAMAZ. Ekranda 20 onayı gözle 5 sn'de süzersin;
-sesle 20 onay = 20 kesinti. Görme engelli için bu, sesli onayı KULLANILAMAZ kılar.
-
-## Çözüm — üç kova
-KiroWhisper sürekli konuşmaz. Ortamda sessizce bekler, Crew'in TÜM onay taleplerini
-görür (`GET /api/approvals`), her birini risk açısından sınıflandırır, ve:
-1. **Sessizce geçir (düşük risk):** dosya okuma, test, geri alınabilir düzenleme →
-   otomatik onayla (`action:"approved"`), kullanıcıyı rahatsız etme.
-2. **Sessizce engelle/beklet (bariz tehlike):** `rm -rf`, prod push, secret loglama →
-   otomatik durdur (`action:"rejected"` veya beklet), sonra "şunu engelledim" özetle.
-3. **Kullanıcıya getir (gerçek karar):** geri alınamaz ama meşru olabilecek, niyet
-   gerektiren → SADECE bunlar sesli gelir.
-
-Sonra kullanıcı sorunca özet:
-> "Son 2 saatte Crew 23 adım yaptı. 19'unu güvenli olduğu için geçtim, 3 tehlikeliyi
-> engelledim, 1 tanesi seni bekliyor: auth.js'i siliyor, geri alınamaz, emin olamadım."
-
-## Neden creative (wrapper değil)
-Crew tüm onayları EŞİT verir. Zeka BİZİM katmanımızda:
-- Her onayı risk sınıflandır (Bedrock + kurallar): geri alınabilir mi? shell mi?
-  secret'a mı dokunuyor? kaç satır? (Risk Radarı = bu adım.)
-- Karar ver: geçir / engelle / getir.
-- Biriktirip özetle: gürültüyü sinyale çevir.
-
-## Güvenlik ilkesi (kritik)
-- MUHAFAZAKAR filtre: emin değilse HER ZAMAN kullanıcıya getir (güvenli varsayılan;
-  Crew'in "deny on silence" ruhuyla aynı).
-- Kullanıcı HER ZAMAN ne geçtiğini görebilmeli ("19'unu geçtim, duymak ister misin?").
-- Yıkıcı hiçbir şey sessizce geçmez — sadece açıkça düşük-riskli/geri-alınabilir olanlar.
-- Her karar loglanır (audit; sorumlu-AI).
-
-## Spike-gerçekliği: KANITLANDI ✅
-- `GET /api/approvals` → tüm bekleyen onaylar (tool, purpose, input). ✅
-- permission meta: `is_read_only`, `is_shell`, diff → risk sınıflandırmasının HAM VERİSİ hazır. ✅
-- `action:"approved"` (geçir) / `"rejected"` (engelle) / kullanıcıya getir. ✅
-- `action:"trust"` → "bu tip işleri hep geçir" (öğrenen filtre). ✅
-- Bedrock (AWS Builder): ham diff/tool → risk sınıfı + sese uygun özet.
-
-## Öncelik: ÇEKİRDEK (projenin kimliği — demo bunun üstüne kurulur)
+## Competitive difference (kept clear)
+"Voice coding" is NOW A COMMODITY (ChatGPT Voice->Codex, Google Antigravity). Our
+difference is NOT writing code by voice. Our difference is:
+(a) accessibility-first (a blind developer's real pain — confirmed by MS Research + arXiv),
+(b) eyes-free/remote AUTONOMOUS OVERSIGHT (away from the desk, via Echo),
+(c) Ambient Awareness: a safe filter that surfaces only the real decision.
 
 ---
 
-# TEMEL ALTYAPI USE CASE'LERİ (UC-1 .. UC-12)
+# ⭐ THE SHARP EDGE — Ambient Awareness (the project's identity)
 
-> Bunlar "meslektaş" deneyiminin altyapısı. Gerekli ama TEK BAŞINA fark değil.
-> Ambient Awareness bunların üstünde çalışır.
+> This is the capability that moves the project from "MCP wrapper" to "creative
+> agentic add-on." The demo is built on it, the submission headline is it.
+> UC-1..12 are its infrastructure.
 
-## UC-1 — Durum sor (PULL / özet)
-- **Aktör:** Deniz. **Tetikleyici:** "Kiro, ne durumda?"
-- **Akış:** Sistem Crew durumunu + bekleyen onayları çekip sese uygun özetler.
-  "Bir işi var: auth.js'de eski login'i silmek için onayını bekliyor. Başka bekleyen yok."
-- **Spike:** ✅ `GET /api/status` + `GET /api/approvals`. Özet Bedrock ile.
-- **Öncelik:** ÇEKİRDEK
+## Problem (why it is mandatory)
+An autonomous agent working for hours hits DOZENS of approval points (create file,
+run test, install package, delete line...). If they all come by voice, KiroWhisper
+becomes torture — because VOICE CANNOT BE SCANNED LIKE A SCREEN. On a screen you
+skim 20 approvals in 5 seconds; by voice, 20 approvals = 20 interruptions. For a
+blind developer this makes voice approval UNUSABLE.
 
-## UC-2 — Onayla (yüksek riskli → çift-teyit)
-- **Aktör:** Deniz. **Tetikleyici:** "Onayla."
-- **Akış:** Yıkıcı/geri-alınamaz ise sistem niyet doğrular ("42 satırı siliyor,
-  geri alınamaz, emin misin?") → net "evet" → onayla.
+## Solution — three buckets
+KiroWhisper does not talk constantly. It waits quietly in the background, sees ALL
+of Crew's approval requests (`GET /api/approvals`), classifies each by risk, and:
+1. **Silently pass (low risk):** read files, tests, reversible edits -> auto-approve
+   (`action:"approved"`), don't disturb the user.
+2. **Silently block/hold (obvious danger):** `rm -rf`, prod push, secret logging ->
+   auto-stop (`action:"rejected"` or hold), summarize "I blocked this" later.
+3. **Surface to the user (real decision):** irreversible but possibly legitimate,
+   requires intent -> ONLY these come by voice.
+
+Then, when the user asks, a summary:
+> "In the last 2 hours Crew did 23 steps. I passed 19 as safe, blocked 3 dangerous
+> ones, and 1 is waiting for you: it deletes auth.js, irreversible, I wasn't sure."
+
+## Why it is creative (not a wrapper)
+Crew hands over all approvals equally. The intelligence is in OUR layer:
+- Classify each approval by risk (Bedrock + rules): reversible? shell? touching a
+  secret? how many lines? (Risk Radar = this step.)
+- Decide: pass / block / surface.
+- Accumulate and summarize: turn noise into signal.
+
+## Safety principle (critical)
+- CONSERVATIVE filter: if unsure, ALWAYS surface to the user (safe default; same
+  spirit as Crew's "deny on silence").
+- The user can ALWAYS see what was passed ("I passed 19, want to hear them?").
+- Nothing destructive passes silently — only clearly low-risk/reversible items.
+- Every decision is logged (audit; responsible AI).
+
+## Spike-reality: PROVEN ✅
+- `GET /api/approvals` -> all pending approvals (tool, purpose, input). ✅
+- permission meta: `is_read_only`, `is_shell`, diff -> the RAW DATA for risk
+  classification is already there. ✅
+- `action:"approved"` (pass) / `"rejected"` (block) / surface to user. ✅
+- `action:"trust"` -> "always pass this kind" (a learning filter). ✅
+- Bedrock (AWS Builder): raw diff/tool -> risk level + voice-friendly summary.
+
+## Priority: CORE (the project's identity — the demo is built on it)
+
+---
+
+# INFRASTRUCTURE USE CASES (UC-1 .. UC-12)
+
+> These are the infrastructure of the "colleague" experience. Necessary but NOT a
+> difference on their own. Ambient Awareness runs on top of them.
+
+## UC-1 — Ask status (PULL / summary)
+- **Actor:** Deniz. **Trigger:** "Kiro, what's up?"
+- **Flow:** The system fetches Crew's state + pending approvals and produces a
+  voice-friendly summary. "It has one thing: waiting for your approval to delete
+  the old login in auth.js. Nothing else pending."
+- **Spike:** ✅ `GET /api/status` + `GET /api/approvals`. Summary via Bedrock.
+- **Priority:** CORE
+
+## UC-2 — Approve (high risk -> double-confirm)
+- **Actor:** Deniz. **Trigger:** "Approve."
+- **Flow:** If destructive/irreversible, the system re-confirms intent ("this
+  deletes 42 lines, irreversible, are you sure?") -> clear "yes" -> approve.
 - **Spike:** ✅ `POST /api/chat/slots/<slot>/approve {action:"approved", request_id}`
-  → `{"ok":true}`, dosya GERÇEKTEN değişti. Risk verisi: is_shell/is_read_only/diff.
-- **Öncelik:** ÇEKİRDEK
-- **TUZAK:** action="approved" (geçmiş zaman!) — "approve" sessizce rejected'e düşer.
+  -> `{"ok":true}`, the file ACTUALLY changed. Risk data: is_shell/is_read_only/diff.
+- **Priority:** CORE
+- **GOTCHA:** action="approved" (past tense!) — "approve" silently falls to rejected.
 
-## UC-3 — Reddet → alt seçenekler
-- **Aktör:** Deniz. **Tetikleyici:** "Hayır."
-- **Akış:** Önce güven ver ("yapmadım"), sonra sesli 3 seçenek: ATLA / DURDUR / İPTAL
-  (hep aynı sıra/kelime). Güvenli varsayılan + timeout = DURDUR. İptal ayrıca teyit ister.
-- **Spike:** ⚠️ `action:"rejected"` = atla/devam (native, ✅). "Durdur" = reddet+yeni
-  mesaj gönderme (bizim map). "İptal" = slot durdur. Native ikili modeli 3'e biz açıyoruz.
-- **Öncelik:** ÇEKİRDEK
+## UC-3 — Reject -> sub-options
+- **Actor:** Deniz. **Trigger:** "No."
+- **Flow:** First reassure ("I didn't do it"), then three spoken options: SKIP /
+  PAUSE / CANCEL (always same order/words). Safe default + timeout = PAUSE. Cancel
+  asks for extra confirmation.
+- **Spike:** ⚠️ `action:"rejected"` = skip/continue (native, ✅). "Pause" = reject +
+  send no new message (our mapping). "Cancel" = stop the slot. We open the native
+  binary model into three.
+- **Priority:** CORE
 
-## UC-4 — Sonuç dinle (görev bitti)
-- **Aktör:** sistem→Deniz. **Tetikleyici:** görev tamamlandı.
-- **Akış:** "İş bitti. 3 dosya değişti, testler geçti." (sese uygun özet)
-- **Spike:** ✅ `GET /api/spawn/<id>` → done, turns, sonuç mesajları.
-- **Öncelik:** ÇEKİRDEK
+## UC-4 — Hear the result (task done)
+- **Actor:** system->Deniz. **Trigger:** task completed.
+- **Flow:** "Done. 3 files changed, tests passed." (voice-friendly summary)
+- **Spike:** ✅ `GET /api/spawn/<id>` -> done, turns, result messages.
+- **Priority:** CORE
 
-## UC-5 — Meslektaş seni arar (PUSH / proaktif) ⭐
-- **Aktör:** sistem→Deniz. **Tetikleyici:** yeni onay/olay çıktı, kullanıcı ekranda değil.
-- **Akış:** Sistem kendiliğinden araya girer: "KiroWhisper: 3. görev onayını bekliyorum."
-  (müzik kısılır / ışık / kısa anons) → kullanıcı "ne var?" → akış.
-- **Spike/kural:** ⚠️ SAHNELENECEK (Emerson: simülasyonda meşru). Teknik ayak:
-  arka planda `GET /api/approvals` POLLING → yeni onayda sesli anons tetikle.
-  Gerçek veri gerçek; "kendiliğinden konuşma" sahnelenir.
-- **Öncelik:** ÇEKİRDEK (ruh) — ama Ambient Awareness ile birlikte: sadece FİLTREDEN
-  geçen "gerçek karar" proaktif gelir, gürültü değil.
+## UC-5 — The colleague calls you (PUSH / proactive) ⭐
+- **Actor:** system->Deniz. **Trigger:** a new approval/event appeared, the user is not at the screen.
+- **Flow:** The system speaks up on its own: "KiroWhisper: I need your approval on
+  task 3." (music ducks / light / short alert) -> user "what is it?" -> flow.
+- **Spike/rules:** ⚠️ WILL BE STAGED (Emerson: legitimate in simulation). Technical
+  basis: background `GET /api/approvals` POLLING -> trigger spoken alert on a new
+  approval. The data is real; the "speaking on its own" is staged.
+- **Priority:** CORE (the soul) — but with Ambient Awareness: only the "real
+  decision" that passes the filter is surfaced proactively, not the noise.
 
-## UC-6 — "Artık hep onayla" (trust / oturum güveni)
-- **Aktör:** Deniz. **Tetikleyici:** "Bu görev için hep onayla."
-- **Akış:** Sistem oturumda kalan (düşük riskli) adımları oto-onaylar.
-- **Spike:** ✅ `action:"trust"`. DİKKAT: sadece düşük-riskli çerçevesiyle sunulur.
-- **Öncelik:** FARKLILAŞTIRICI
+## UC-6 — "Always approve from now on" (trust / session trust)
+- **Actor:** Deniz. **Trigger:** "For this task, always approve."
+- **Flow:** The system auto-approves the remaining (low-risk) steps in the session.
+- **Spike:** ✅ `action:"trust"`. NOTE: presented only with a low-risk framing.
+- **Priority:** DIFFERENTIATOR
 
-## UC-7 — Bağlam takibi (state across sessions)
-- **Aktör:** Deniz. **Tetikleyici:** "Hangisi hata verdi?"
-- **Akış:** Sistem birden fazla görev arasında hangisinden bahsettiğini takip eder.
-  "2. görev — testler kırmızı. Onu mu açayım?"
-- **Spike:** ✅ `GET /api/spawn` (liste + durumlar). "Hangisi" çözümü bizde (kısa hafıza).
-- **Öncelik:** FARKLILAŞTIRICI (kurallar bunu "creative" sayıyor)
+## UC-7 — Context tracking (state across sessions)
+- **Actor:** Deniz. **Trigger:** "Which one failed?"
+- **Flow:** The system tracks which of several tasks is being referred to. "Task 2 —
+  tests are red. Want me to open it?"
+- **Spike:** ✅ `GET /api/spawn` (list + states). The "which" resolution is ours (short memory).
+- **Priority:** DIFFERENTIATOR (the rules consider this "creative")
 
-## UC-8 — Mid-task yönlendirme (redirect)
-- **Aktör:** Deniz. **Tetikleyici:** agent çalışırken "Dur, o dosyaya dokunma, önce testler."
-- **Akış:** Çalışan slot'a müdahale, yönü değiştir.
-- **Spike:** ⚠️ `POST /api/chat {slot,message}` ile çalışan slot'a mesaj (test edilecek).
-  ChatGPT Voice'un öne çıkardığı yetenek; bizde "meslektaşa araya girme".
-- **Öncelik:** GELECEK (v2)
+## UC-8 — Mid-task redirect
+- **Actor:** Deniz. **Trigger:** while the agent works, "Stop, don't touch that file, run tests first."
+- **Flow:** Intervene in the running slot, change direction.
+- **Spike:** ⚠️ `POST /api/chat {slot,message}` to the running slot (to be tested).
+  The capability ChatGPT Voice highlights; for us, "interrupting the colleague."
+- **Priority:** FUTURE (v2)
 
-## UC-9 — Clarifying question (agent SANA sorar)
-- **Aktör:** sistem→Deniz. **Tetikleyici:** agent açık uçlu bir seçim gerektiriyor.
-- **Akış:** "İki yol var: token-tabanlı mı, session-tabanlı mı? Hangisini istersin?"
-  → sesli seçim. Sadece onay değil, GERÇEK DİYALOG → "meslektaş" metaforunu tamamlar.
-- **Spike:** ✅ (veri var) slot alanları: `waiting_for_input`, `needs_input`,
-  `has_options`, `options` (spike'ta görüldü). Teknik olarak mümkün.
-- **Öncelik:** FARKLILAŞTIRICI (meslektaş metaforunu tamamlar)
+## UC-9 — Clarifying question (the agent asks YOU)
+- **Actor:** system->Deniz. **Trigger:** the agent needs an open-ended choice.
+- **Flow:** "Two ways: token-based or session-based? Which do you want?" -> voice
+  choice. Not just approval, REAL DIALOGUE -> completes the "colleague" metaphor.
+- **Spike:** ✅ (data exists) slot fields: `waiting_for_input`, `needs_input`,
+  `has_options`, `options` (seen in the spike). Technically feasible.
+- **Priority:** DIFFERENTIATOR (completes the colleague metaphor)
 
-## UC-10 — Çoklu görev "standup" özeti
-- **Aktör:** Deniz. **Tetikleyici:** "Genel durum ne?" / sabah briefing.
-- **Akış:** "3 görevden 2'si bitti, biri onay bekliyor, biri hata verdi." (paralel özet)
-- **Spike:** ✅ `GET /api/spawn` + `/api/status`. Bedrock özet.
-- **Öncelik:** FARKLILAŞTIRICI
+## UC-10 — Multi-task "standup" summary
+- **Actor:** Deniz. **Trigger:** "What's the overall status?" / morning briefing.
+- **Flow:** "2 of 3 tasks done, one waiting for approval, one failed." (parallel summary)
+- **Spike:** ✅ `GET /api/spawn` + `/api/status`. Bedrock summary.
+- **Priority:** DIFFERENTIATOR
 
-## UC-11 — Güvenli karar kaydı (audit)
-- **Aktör:** sistem. **Tetikleyici:** her onay/red/filtre kararı.
-- **Akış:** "Deniz 08:16'da silme onayını reddetti / KiroWhisper 3 tehlikeli işlemi
-  engelledi" → loglanır, sorulunca özetlenebilir.
-- **Spike:** ✅ kararlar bizde üretiliyor; loglama bizim katman. (Crew'de security_events da var.)
-- **Öncelik:** FARKLILAŞTIRICI (sorumlu-AI puanı; HITL "delivery guarantee" ilkesi)
+## UC-11 — Safe decision record (audit)
+- **Actor:** system. **Trigger:** every approve/reject/filter decision.
+- **Flow:** "Deniz rejected the delete approval at 08:16 / KiroWhisper blocked 3
+  dangerous operations" -> logged, summarizable on request.
+- **Spike:** ✅ decisions are produced in our layer; logging is our layer. (Crew also has security_events.)
+- **Priority:** DIFFERENTIATOR (responsible-AI points; the HITL "delivery guarantee" principle)
 
-## UC-12 — Hata/başarısızlık bildirimi
-- **Aktör:** sistem→Deniz. **Tetikleyici:** görev başarısız oldu.
-- **Akış:** "2. görev başarısız oldu, testler kırmızı. Detay ister misin?"
-- **Spike:** ✅ `task_complete` başarısızlıkla da gelir; `GET /api/spawn/<id>` durum.
-- **Öncelik:** ÇEKİRDEK (sonuç döngüsünün parçası)
-
----
-
-# Yeni görev başlatma — kapsam kararı
-- KiroWhisper ODAK = DENETİM (monitor + approve), yeni iş başlatma DEĞİL.
-- Sesle yeni görev başlatmak (`POST /api/spawn`) teknik olarak mümkün (spike ✅) ama
-  bu bizi "sesle coding" commodity'sine yaklaştırır → kapsam DIŞI (v2). Fark denetimde.
+## UC-12 — Failure notification
+- **Actor:** system->Deniz. **Trigger:** a task failed.
+- **Flow:** "Task 2 failed, tests are red. Want details?"
+- **Spike:** ✅ `task_complete` also arrives on failure; `GET /api/spawn/<id>` state.
+- **Priority:** CORE (part of the result loop)
 
 ---
 
-# Kapsam özeti (requirement önceliği)
-- **ÇEKİRDEK (olmazsa olmaz):** Ambient Awareness + UC-1,2,3,4,5,12
-- **FARKLILAŞTIRICI (çekirdek çalışınca):** UC-6,7,9,10,11
-- **GELECEK (v2, submission'da "future work"):** UC-8, sesle yeni görev başlatma
+# Starting new tasks — scope decision
+- KiroWhisper's FOCUS = OVERSIGHT (monitor + approve), NOT starting new work.
+- Starting a new task by voice (`POST /api/spawn`) is technically feasible (spike ✅)
+  but it moves us toward the "voice coding" commodity -> OUT OF SCOPE (v2). The
+  difference is in oversight.
 
-# Demo kurgusu (bu use case'lerden)
-1. HOOK (0-30sn): Akif'in kendi derdi (3 proje, sürekli onay, ekrana dönme yorgunluğu).
-2. AMBIENT AWARENESS (30-100sn): Crew otonom çalışıyor, KiroWhisper sessizce süzüyor;
-   sadece 1 gerçek kararı sesle getiriyor (UC-5→UC-1→UC-2 çift-teyit). "19'unu geçtim."
-3. DERİNLİK (100-150sn): risk sınıflandırma + güvenli onay nasıl çalışıyor (Bedrock).
-4. CURB-CUT (150-180sn): "benim için konfor; görme engelli geliştirici için, ekrana
-   hiç bağımlı olmadan otonom agent'ı yönetebilmek — çünkü ses tek başına taranamaz,
-   filtre olmadan kullanılamaz."
+---
+
+# Scope summary (requirement priority)
+- **CORE (must-have):** Ambient Awareness + UC-1,2,3,4,5,12
+- **DIFFERENTIATOR (once core works):** UC-6,7,9,10,11
+- **FUTURE (v2, "future work" in submission):** UC-8, voice-starting new tasks
+
+# Demo storyline (from these use cases)
+1. HOOK (0-30s): the maker's own pain (3 projects, constant approvals, the fatigue
+   of turning back to the screen).
+2. AMBIENT AWARENESS (30-100s): Crew works autonomously, KiroWhisper filters
+   silently; surfaces only 1 real decision by voice (UC-5->UC-1->UC-2 double-confirm).
+   "I passed 19."
+3. DEPTH (100-150s): how risk classification + safe approval work (Bedrock).
+4. CURB-CUT (150-180s): "a comfort for me; for a blind developer, being able to
+   oversee an autonomous agent without any dependence on a screen — because voice
+   alone cannot be scanned, and without a filter it is unusable."

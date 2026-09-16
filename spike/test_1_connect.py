@@ -1,6 +1,6 @@
-"""Spike adım 1: Gateway'e bağlan ve ping/status al.
-Auth stratejisi: loopback secret'ı (~/.kiro/crew/run/gateway-5476.secret veya
-.local_secret) token olarak dene. Client loopback'te token'sız da denenebilir.
+"""Spike step 1: connect to the Gateway and get ping/status.
+Auth strategy: try the loopback secret (~/.kiro/crew/run/gateway-5476.secret or
+.local_secret) as a token. The client may also work token-less on loopback.
 """
 import asyncio
 import os
@@ -11,7 +11,7 @@ CREW_HOME = Path(os.environ.get("KIROCREW_HOME", str(Path.home() / ".kiro" / "cr
 
 
 def read_secret() -> str:
-    # Gateway'in kendi secret'ı (port-bazlı) en olası token kaynağı
+    # The Gateway's own (port-based) secret is the most likely token source
     for candidate in [
         CREW_HOME / "run" / "gateway-5476.secret",
         CREW_HOME / ".local_secret",
@@ -19,19 +19,19 @@ def read_secret() -> str:
         try:
             val = candidate.read_text(encoding="utf-8").strip()
             if val:
-                print(f"[secret] okundu: {candidate.name} (len={len(val)})")
+                print(f"[secret] read: {candidate.name} (len={len(val)})")
                 return val
         except OSError:
             pass
-    print("[secret] hiçbir secret dosyası okunamadı")
+    print("[secret] no secret file could be read")
     return ""
 
 
 async def main():
     token = read_secret()
-    # Önce token ile dene
+    # Try with token first
     async with KiroCrewClient(base_url="http://localhost:5476", token=token) as mc:
-        print("\n--- ping (token ile) ---")
+        print("\n--- ping (with token) ---")
         try:
             ok = await mc.ping()
             print("ping:", ok)
@@ -40,11 +40,11 @@ async def main():
                 print("status:", str(status)[:400])
                 return
         except Exception as e:
-            print("token ile hata:", repr(e)[:300])
+            print("error with token:", repr(e)[:300])
 
-    # Token çalışmazsa token'sız (loopback) dene
+    # If the token fails, try token-less (loopback)
     async with KiroCrewClient(base_url="http://localhost:5476") as mc2:
-        print("\n--- ping (token'sIZ, loopback) ---")
+        print("\n--- ping (token-LESS, loopback) ---")
         try:
             ok = await mc2.ping()
             print("ping:", ok)
@@ -52,7 +52,7 @@ async def main():
                 status = await mc2.get_status()
                 print("status:", str(status)[:400])
         except Exception as e:
-            print("token'sIZ hata:", repr(e)[:300])
+            print("error token-LESS:", repr(e)[:300])
 
 
 if __name__ == "__main__":

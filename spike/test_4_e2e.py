@@ -1,6 +1,6 @@
-"""Spike 4: UÇTAN UCA tek akış.
-Görev ateşle -> permission'i HIZLI yakala -> deny-timeout'tan ÖNCE approve ->
-dosya GERÇEKTEN oluşuyor mu?  (approval mekanizmasının tam kanıtı)
+"""Spike 4: END TO END single flow.
+Fire a task -> catch the permission FAST -> approve BEFORE the deny-timeout ->
+does the file REALLY get created?  (full proof of the approval mechanism)
 """
 import json
 import socket
@@ -44,7 +44,7 @@ def fire(p, body):
 
 def pending_approval():
     slot = get(f"/api/chat/slots/{SLOT}")
-    # EN SON permission mesajını al (geçmişteki eskiyi değil)
+    # take the MOST RECENT permission message (not an old one from history)
     for m in reversed(slot.get("messages", [])):
         if m.get("role") == "permission":
             meta = m.get("meta", {})
@@ -54,7 +54,7 @@ def pending_approval():
     return None, None
 
 
-# temizlik: dosyayı ve ESKİ slot'u sil, taze başla
+# cleanup: delete the file and the OLD slot, start fresh
 if TARGET.exists():
     TARGET.unlink()
 try:
@@ -69,38 +69,38 @@ try:
 except Exception:
     pass
 
-print("=== görev ateşle ===")
+print("=== fire the task ===")
 fire("/api/chat", {"slot": SLOT,
                    "message": "Create a file named spike_e2e.txt containing exactly: WORKS. Use file tools."})
 
-print("=== permission'i HIZLI yakala (1sn aralık) ===")
+print("=== catch the permission FAST (1s interval) ===")
 aid = None
 for i in range(40):
     time.sleep(1)
     aid, tool = pending_approval()
     if aid:
-        print(f"[{i}s] YAKALANDI: {tool}  aid={aid}")
+        print(f"[{i}s] CAUGHT: {tool}  aid={aid}")
         break
     if i % 5 == 0:
-        print(f"[{i}s] henüz onay yok...")
+        print(f"[{i}s] no approval yet...")
 
 if not aid:
-    print("!! onay yakalanamadı"); raise SystemExit(1)
+    print("!! could not catch an approval"); raise SystemExit(1)
 
-print("=== HEMEN approve ===")
+print("=== approve IMMEDIATELY ===")
 r = post(f"/api/chat/slots/{SLOT}/approve", {"action": "approved", "request_id": aid})
 print("approve:", r)
 
-print("=== dosya oluşuyor mu? (10sn izle) ===")
+print("=== does the file appear? (watch 10s) ===")
 for i in range(10):
     time.sleep(1)
     if TARGET.exists():
-        print(f"[{i}s] ✅ DOSYA OLUŞTU! içerik: {TARGET.read_text()!r}")
+        print(f"[{i}s] FILE CREATED! content: {TARGET.read_text()!r}")
         break
 else:
-    print("dosya hâlâ yok")
+    print("file still missing")
 
-print("\n=== SON ASISTAN MESAJI ===")
+print("\n=== LAST ASSISTANT MESSAGE ===")
 slot = get(f"/api/chat/slots/{SLOT}")
 for m in reversed(slot.get("messages", [])):
     if m.get("role") == "assistant":

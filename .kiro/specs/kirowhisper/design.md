@@ -2,209 +2,212 @@
 
 ## Overview
 
-KiroWhisper, otonom **Kiro Crew**'i sesle denetleyen bir katmandır. Çekirdeği bir
-**MCP server**'dır (spec 2025-11-25, Streamable HTTP); bir tarafta sesli arayüz
-(Alexa+ veya simülasyon) MCP client olarak bağlanır, diğer tarafta KiroWhisper
-**Kiro Crew Gateway REST API**'sini çağırır. Ayırt edici yetenek **Ambient
-Awareness**: onay taleplerini sürekli izleyen, risk sınıflandıran ve filtreleyen
-bir arka plan motoru.
+KiroWhisper is a layer for overseeing the autonomous **Kiro Crew** by voice. Its
+core is an **MCP server** (spec 2025-11-25, Streamable HTTP); on one side a voice
+interface (Alexa+ or simulation) connects as an MCP client, on the other side
+KiroWhisper calls the **Kiro Crew Gateway REST API**. The distinguishing
+capability is **Ambient Awareness**: a background engine that continuously
+watches approval requests, classifies them by risk, and filters them.
 
-Bu tasarım, `spike/`'ta canlı doğrulanan gerçek Crew API davranışına dayanır
-(bkz. `docs/PROJECT_NOTES.md` → "CREW SPIKE SONUÇLARI"). Uydurma uç yoktur.
+This design is grounded in the real Crew API behavior verified live in the spike
+(see the private working notes -> "Crew Spike Results"). No invented endpoints.
 
-## Mimari (yüksek seviye)
+## High-level architecture
 
 ```mermaid
 flowchart LR
-  U["Kullanıcı (Deniz)\nsesle"] -->|STT| VUI["Ses Arayüzü\n(simülasyon: web/terminal\nSTT + TTS)"]
-  VUI -->|MCP Streamable HTTP| MCP["KiroWhisper MCP Server\n(tool'lar: get_status,\nget_pending_decisions,\napprove, reject, summarize)"]
-  MCP --> CORE["Çekirdek Servisler"]
-  subgraph CORE_BOX["KiroWhisper Çekirdeği"]
-    CORE --> AMB["Ambient Awareness Motoru\n(polling + orkestrasyon)"]
-    AMB --> RISK["Risk Sınıflandırıcı\n(kurallar + Bedrock)"]
-    AMB --> AUD["Audit Kaydı"]
-    CORE --> SUM["Özetleyici\n(Bedrock: sese uygun)"]
-    CORE --> GW["Crew Gateway İstemcisi\n(REST, ?token= + Origin)"]
+  U["User (Deniz)\nby voice"] -->|STT| VUI["Voice Interface\n(simulation: web/terminal\nSTT + TTS)"]
+  VUI -->|MCP Streamable HTTP| MCP["KiroWhisper MCP Server\n(tools: get_status,\nget_pending_decisions,\napprove, reject, summarize)"]
+  MCP --> CORE["Core Services"]
+  subgraph CORE_BOX["KiroWhisper Core"]
+    CORE --> AMB["Ambient Awareness Engine\n(polling + orchestration)"]
+    AMB --> RISK["Risk Classifier\n(rules + Bedrock)"]
+    AMB --> AUD["Audit Log"]
+    CORE --> SUM["Summarizer\n(Bedrock: voice-friendly)"]
+    CORE --> GW["Crew Gateway Client\n(REST, ?token= + Origin)"]
   end
   GW -->|localhost:5476| CREW["Kiro Crew Gateway"]
-  RISK -.->|risk özeti| SUM
-  MCP -->|sesli yanıt metni| VUI -->|TTS| U
+  RISK -.->|risk summary| SUM
+  MCP -->|spoken response text| VUI -->|TTS| U
 ```
 
-**Ayrım:** MCP server = dış yüz (ses tarafı). Çekirdek servisler = zeka. Gateway
-istemcisi = Crew'e köprü. Ambient Awareness motoru = arka planda sürekli çalışan
-beyin. Bu ayrım, "transport (ses/Crew) değişse bile zeka bizde kalır" ilkesini korur.
+**Separation:** the MCP server is the outer face (voice side). Core services are
+the intelligence. The Gateway client is the bridge to Crew. The Ambient Awareness
+engine is the always-running brain. This separation preserves the principle
+"the transport (voice/Crew) may change, but the intelligence stays with us."
 
-## Bileşenler ve sorumluluklar
+## Components and responsibilities
 
-### 1. Crew Gateway İstemcisi (`gateway_client`)
-Crew Gateway REST'ini saran ince, tek sorumlu katman. **Spike'ta doğrulanan
-gerçek uçlar:**
-- Auth: `kirocrew token` → JWT; her istekte `?token=<JWT>` query param + `Origin:
-  http://localhost:5476` header (ZORUNLU — `deny_non_dashboard_caller`).
-- `get_status()` → `GET /api/status`
-- `list_pending_approvals()` → `GET /api/approvals` → `[{id, source, tool,
+### 1. Crew Gateway Client (`gateway_client`)
+A thin, single-responsibility layer wrapping the Crew Gateway REST. **Real
+endpoints verified in the spike:**
+- Auth: `kirocrew token` -> JWT; every request carries `?token=<JWT>` query param
+  + `Origin: http://localhost:5476` header (REQUIRED — `deny_non_dashboard_caller`).
+- `get_status()` -> `GET /api/status`
+- `list_pending_approvals()` -> `GET /api/approvals` -> `[{id, source, tool,
   tool_input, tool_purpose, slot, ts}]`
-- `get_slot(slot)` → `GET /api/chat/slots/<slot>` (permission mesajları + meta)
-- `resolve(slot, request_id, action)` → `POST /api/chat/slots/<slot>/approve`
-  gövde `{"action": action, "request_id": request_id}`
-  - action ∈ {`"approved"`, `"rejected"`, `"trust"`}  ⚠️ "approved" (geçmiş zaman!)
-- `send_message(slot, msg)` → `POST /api/chat` (redirect/clarify; ateşle-bekleme)
-- `spawn(task)` / `get_task_result(id)` → `POST/GET /api/spawn[/id]` (durum döngüsü)
+- `get_slot(slot)` -> `GET /api/chat/slots/<slot>` (permission messages + meta)
+- `resolve(slot, request_id, action)` -> `POST /api/chat/slots/<slot>/approve`
+  body `{"action": action, "request_id": request_id}`
+  - action in {`"approved"`, `"rejected"`, `"trust"`}  ⚠️ "approved" (past tense!)
+- `send_message(slot, msg)` -> `POST /api/chat` (redirect/clarify; fire-and-forget)
+- `spawn(task)` / `get_task_result(id)` -> `POST/GET /api/spawn[/id]` (status loop)
 
-**Tasarım kararları:**
-- Doğrudan `urllib`/`httpx` ile REST — repo-içi `kirocrew-client` cookie auth
-  kullandığı için ÇALIŞMIYOR; biz `?token=`+Origin ile kendi ince istemcimizi yazarız.
-- Token yenileme: token süreli (spike'ta ~exp gördük); istemci gerektiğinde
-  `kirocrew token`'ı yeniden çağırır (veya app-secret exchange — v2).
+**Design decisions:**
+- Direct REST via `httpx` — the in-repo `kirocrew-client` uses cookie auth and
+  DOES NOT WORK; we write our own thin client with `?token=`+Origin.
+- Token refresh: tokens expire (observed in spike); the client re-runs
+  `kirocrew token` when needed (or app-secret exchange — v2).
 
-### 2. Ambient Awareness Motoru (`ambient`)
-Projenin kalbi. Arka planda sürekli çalışan asenkron döngü:
+### 2. Ambient Awareness Engine (`ambient`)
+The heart of the project. A continuously running async loop:
 ```
-loop (her N saniye):
+loop (every N seconds):
   pending = gateway.list_pending_approvals()
-  for approval in pending yeni olanlar:
+  for approval in newly seen:
      risk = risk_classifier.classify(approval)
      decision = policy.decide(risk, session_trust)
      if decision == AUTO_APPROVE:  gateway.resolve(slot, id, "approved"); audit(...)
      elif decision == AUTO_BLOCK:  gateway.resolve(slot, id, "rejected"); audit(...)
      else (SURFACE):               queue_for_user(approval, risk); notify_proactive()
 ```
-- **Idempotent:** her approval `id` bir kez işlenir (görülenleri hatırlar).
-- **Muhafazakâr:** `policy.decide` UNKNOWN veya HIGH'da her zaman SURFACE (R3.3).
-- **Fail-safe:** Gateway erişilemezse hiçbir şey otomatik geçmez (R1.4).
+- **Idempotent:** each approval `id` is processed once (remembers seen ids).
+- **Conservative:** `policy.decide` always SURFACEs on UNKNOWN or HIGH (R3.3).
+- **Fail-safe:** if the Gateway is unreachable, nothing is auto-passed (R1.4).
 
-### 3. Risk Sınıflandırıcı (`risk`)
-Bir onay talebini LOW / HIGH / UNKNOWN'a atar. **İki katman:**
-- **(a) Deterministik kurallar (hızlı, güvenilir, önce çalışır):**
-  - `is_read_only` truthy → LOW
-  - `is_shell` truthy → en az HIGH
-  - `tool_input`/diff'te yıkıcı desen (`rm -rf`, `DROP TABLE`, `force`, `.env`/secret
-    yolu, geniş silme) → HIGH
-  - net değilse → (b)'ye devret
-- **(b) Bedrock sınıflandırma (nüanslı):** ham tool + purpose + diff → Bedrock'a
-  "bu işlem geri alınabilir mi? tehlikeli mi? neden?" → yapılandırılmış risk + gerekçe.
-  Bedrock emin değilse veya hata verirse → UNKNOWN (asla LOW'a düşme).
-- **Çıktı:** `RiskAssessment{level, reason, spoken_summary}` — spoken_summary
-  Özetleyici'ye beslenir.
-- Kural: **kurallar Bedrock'u override eder güvenlik yönünde** (kural HIGH derse,
-  Bedrock LOW dese bile HIGH kalır). Güvenlik tek yönlü sıkılaşır.
+### 3. Risk Classifier (`risk`)
+Assigns an approval to LOW / HIGH / UNKNOWN. **Two layers:**
+- **(a) Deterministic rules (fast, reliable, runs first):**
+  - `is_read_only` truthy -> LOW
+  - `is_shell` truthy -> at least HIGH
+  - destructive pattern in `tool_input`/diff (`rm -rf`, `DROP TABLE`, `force`,
+    `.env`/secret path, broad deletion) -> HIGH
+  - if unclear -> defer to (b)
+- **(b) Bedrock classification (nuanced):** raw tool + purpose + diff -> Bedrock
+  asked "is this reversible? dangerous? why?" -> structured risk + reason. If
+  Bedrock is unsure or errors -> UNKNOWN (never fall to LOW).
+- **Output:** `RiskAssessment{level, reason, spoken_summary}` — spoken_summary
+  feeds the Summarizer.
+- Rule: **rules override Bedrock in the safe direction** (if a rule says HIGH,
+  it stays HIGH even if Bedrock says LOW). Safety tightens one way only.
 
-### 4. Özetleyici (`summarizer`)
-Bedrock ile ham veriyi (diff/log/durum) **sese uygun** metne indirger:
-- Onay özeti: "auth.js'de 42 satır siliniyor, geri alınamaz."
-- Durum özeti: "3 görevden 2'si bitti, biri seni bekliyor."
-- Ambient özeti: "19'unu geçtim, 3'ünü engelledim, 1'i seni bekliyor."
-- Kısıt (NFR-3): kısa, öncelik sıralı, ham diff değil; en fazla 2-3 seçenek.
+### 4. Summarizer (`summarizer`)
+Uses Bedrock to reduce raw data (diff/log/status) into **voice-friendly** text:
+- Approval summary: "42 lines being deleted in auth.js, cannot be undone."
+- Status summary: "2 of 3 tasks done, one is waiting for you."
+- Ambient summary: "I passed 19, blocked 3, and 1 is waiting for you."
+- Constraint (NFR-3): short, priority-ordered, not raw diff; at most 2-3 options.
 
 ### 5. MCP Server (`mcp_server`)
-Çekirdeği MCP tool'ları olarak açar (R12; runtime'da gerçekten çağrılır):
-| Tool | Ne yapar | Çağırır |
+Exposes the core as MCP tools (R12; genuinely invoked at runtime):
+| Tool | What it does | Calls |
 |---|---|---|
-| `get_status` | genel durum + ambient özeti (kaç geçti/engellendi/bekliyor) | gateway + ambient |
-| `get_pending_decisions` | kullanıcıya getirilen (SURFACE) talepleri sesli listeler | ambient kuyruğu |
-| `approve` | bir talebi onaylar (HIGH ise çift-teyit bilgisini döner) | gateway.resolve(approved) |
-| `reject` | reddeder + alt seçenek (atla/durdur/iptal) yönetimi | gateway.resolve(rejected)/pause |
-| `trust_session` | oturum güveni (düşük risk oto-onay) | gateway.resolve(trust) |
-| `summarize` | bir görevin/diff'in sese uygun özeti | summarizer |
-- Transport: **Streamable HTTP** (Alexa+ şartı). Framework: resmi MCP Python SDK.
+| `get_status` | overall status + ambient summary (passed/blocked/waiting) | gateway + ambient |
+| `get_pending_decisions` | voice-lists surfaced requests | ambient queue |
+| `approve` | approves a request (returns double-confirm info if HIGH) | gateway.resolve(approved) |
+| `reject` | rejects + sub-option (skip/pause/cancel) handling | gateway.resolve(rejected)/pause |
+| `trust_session` | session trust (auto-approve low risk) | gateway.resolve(trust) |
+| `summarize` | voice-friendly summary of a task/diff | summarizer |
+- Transport: **Streamable HTTP** (Alexa+ requirement). Framework: official MCP Python SDK.
 
-### 6. Ses Arayüzü (`voice_sim`) — simülasyon
-Kurallara uygun simüle Alexa+ (R11). Arka uç tamamen gerçek; yalnızca Alexa+
-katmanı simüle:
-- **Birincil:** web tabanlı (mikrofon → STT → MCP → TTS). Kullanıcının kendi sesi.
-- STT/TTS: düşük gecikmeli tercih (NFR-2). ElevenLabs YOK (gerçeklik + latency).
-- Proaktif (R7): arka planda ambient motoru SURFACE üretince, arayüz sesli anons
-  tetikler (polling → anons). Gerçek Echo'da sahneleme opsiyonel bonus (Kay bridge).
+### 6. Voice Interface (`voice_sim`) — simulation
+A rules-compliant simulated Alexa+ (R11). The backend is entirely real; only the
+Alexa+ layer is simulated:
+- **Primary:** web-based (microphone -> STT -> MCP -> TTS). The user's own voice.
+- STT/TTS: prefer low-latency (NFR-2). No ElevenLabs (realism + latency).
+- Proactive (R7): when the ambient engine produces a SURFACE, the interface
+  triggers a spoken alert (polling -> alert). Staging on a real Echo is an
+  optional bonus (Kay bridge).
 
 ### 7. Audit (`audit`)
-Her karar (onayla/reddet/oto-geçir/oto-engelle) → zaman damgası, id, risk, karar,
-gerekçe. Yerel append-only kayıt. "Bugün 3 tehlikeli işlemi engelledim" özetinin kaynağı.
+Every decision (approve/reject/auto-pass/auto-block) -> timestamp, id, risk,
+decision, reason. Local append-only log. The source of the "I blocked 3 dangerous
+operations today" summary.
 
-## Ana veri akışları
+## Main data flows
 
-### Akış A — "Kiro ne durumda?" (PULL, R4)
+### Flow A — "What's Kiro up to?" (PULL, R4)
 ```
-ses "ne durumda?" → STT → MCP get_status
-  → ambient.snapshot() (kaç SURFACE/AUTO/BLOCK) + gateway.get_status()
-  → summarizer(Bedrock) → sese uygun metin → TTS → kullanıcı
+voice "what's up?" -> STT -> MCP get_status
+  -> ambient.snapshot() (how many SURFACE/AUTO/BLOCK) + gateway.get_status()
+  -> summarizer(Bedrock) -> voice-friendly text -> TTS -> user
 ```
 
-### Akış B — Ambient filtre + proaktif onay (R1,2,3,5,7) — KALP
+### Flow B — Ambient filter + proactive approval (R1,2,3,5,7) — THE HEART
 ```
-[arka plan] ambient loop:
-  gateway.list_pending_approvals() → yeni approval
-  risk.classify() [kural → gerekirse Bedrock]
+[background] ambient loop:
+  gateway.list_pending_approvals() -> new approval
+  risk.classify() [rules -> Bedrock if needed]
   policy.decide():
-    LOW+trust → gateway.resolve("approved") + audit   (sessiz)
-    açık-deny → gateway.resolve("rejected") + audit    (sessiz)
-    HIGH/UNKNOWN → kuyruğa al + proaktif anons
-[kullanıcı] "ne var?" → get_pending_decisions → özet ("auth.js siliniyor, geri alınamaz")
-  → "onayla" → HIGH ise çift-teyit → approve tool → gateway.resolve("approved")
+    LOW+trust  -> gateway.resolve("approved") + audit   (silent)
+    explicit-deny -> gateway.resolve("rejected") + audit (silent)
+    HIGH/UNKNOWN -> queue + proactive alert
+[user] "what's up?" -> get_pending_decisions -> summary ("auth.js delete, irreversible")
+  -> "approve" -> if HIGH, double-confirm -> approve tool -> gateway.resolve("approved")
 ```
 
-### Akış C — Reddetme alt seçenekleri (R6)
+### Flow C — Rejection sub-options (R6)
 ```
-"hayır" → "yapmadım" + [atla/durdur/iptal]
-  atla   → gateway.resolve("rejected")
-  durdur → resolve etme + görevi beklet (yeni mesaj gönderme); timeout→durdur
-  iptal  → ek teyit → görevi durdur
+"no" -> "I didn't do it" + [skip/pause/cancel]
+  skip   -> gateway.resolve("rejected")
+  pause  -> do not resolve + hold task (send no new message); timeout -> pause
+  cancel -> extra confirm -> stop task
 ```
 
-## Teknik kararlar (kesin)
-- **Dil:** Python 3.12 (Crew ekosistemiyle uyumlu; not: sistemde 3.14 var, spike
-  venv kullandı — üründe 3.12 hedefleyip venv sabitleriz).
-- **MCP:** resmi MCP Python SDK, Streamable HTTP.
-- **LLM:** Amazon Bedrock (AWS Builder mini-challenge). Model: önce Nova Lite
-  (ucuz/hızlı, us-east-1), gerekirse Claude (nüanslı risk). Region **us-east-1**.
-- **Async:** asyncio (polling döngüsü + MCP + REST birlikte).
+## Technical decisions (fixed)
+- **Language:** Python 3.12 (compatible with the Crew ecosystem; note: the machine
+  has 3.14 which the spike venv used — the product targets 3.12 with a pinned venv).
+- **MCP:** official MCP Python SDK, Streamable HTTP.
+- **LLM:** Amazon Bedrock (AWS Builder mini-challenge). Model: Nova Lite first
+  (cheap/fast, us-east-1), Claude if needed (nuanced risk). Region **us-east-1**.
+- **Async:** asyncio (polling loop + MCP + REST together).
 - **Auth:** `?token=` (kirocrew token) + Origin header.
-- **Yapı (öneri):**
+- **Structure (proposed):**
   ```
   src/kirowhisper/
-    gateway_client.py   # Crew REST (spike'tan türetilir)
-    ambient.py          # polling + orkestrasyon
-    risk.py             # kurallar + Bedrock sınıflandırma
-    summarizer.py       # Bedrock sese uygun özet
+    gateway_client.py   # Crew REST (derived from the spike)
+    ambient.py          # polling + orchestration
+    risk.py             # rules + Bedrock classification
+    summarizer.py       # Bedrock voice-friendly summary
     audit.py
-    mcp_server.py       # MCP tool'ları
-    voice_sim/          # web tabanlı ses simülasyonu (STT+TTS)
+    mcp_server.py       # MCP tools
+    voice_sim/          # web-based voice simulation (STT+TTS)
   ```
 
-## Veri modelleri
+## Data models
 ```
-Approval:        { id, slot, tool_title, purpose, diff, is_read_only, is_shell, ts }
+Approval:        { request_id, slot, tool_title, purpose, diff, is_read_only, is_shell, ts }
 RiskAssessment:  { level: LOW|HIGH|UNKNOWN, reason, spoken_summary }
 Decision:        { approval_id, action: AUTO_APPROVE|AUTO_BLOCK|SURFACE, risk, ts }
-PendingDecision: { approval, risk, surfaced_at }        # kullanıcı kuyruğu
+PendingDecision: { approval, risk, surfaced_at }        # user queue
 AuditEntry:      { ts, approval_id, risk, action, reason, by: system|user }
 ```
 
-## Hata / kenar durumlar
-- Gateway down → retry, otomatik onay YOK (R1.4).
-- Bedrock hata/timeout → risk UNKNOWN → SURFACE (fail-safe).
-- Onaylanmadan timeout → Crew "deny on silence" (~60-75sn); ambient bunu bilir,
-  kullanıcıya "süre doldu, güvenli olsun diye reddedildi" der.
-- STT belirsiz + HIGH risk → onaylama, tekrar sor (R5.5).
-- Eski/yinelenen approval id → idempotent guard (en son permission mesajı alınır).
+## Errors / edge cases
+- Gateway down -> retry, NO auto-approve (R1.4).
+- Bedrock error/timeout -> risk UNKNOWN -> SURFACE (fail-safe).
+- Timeout without approval -> Crew "deny on silence" (~60-75s); ambient knows this
+  and tells the user "it timed out and was rejected to be safe."
+- STT ambiguous + HIGH risk -> do not approve, re-ask (R5.5).
+- Stale/duplicate approval id -> idempotent guard (take the latest permission message).
 
-## Güvenlik (NFR-1)
-- Güvenli varsayılan her katmanda: sınıflandırma UNKNOWN→SURFACE, kurallar tek
-  yönlü sıkılaşır, Gateway/Bedrock hatası→SURFACE.
-- Yıkıcı işlem yalnızca açık kullanıcı onayı veya açık deny-kuralıyla.
-- Secret/token yanıtlarda maskelenir; audit'e ham secret yazılmaz.
+## Security (NFR-1)
+- Safe default at every layer: classification UNKNOWN->SURFACE, rules tighten one
+  way, Gateway/Bedrock errors -> SURFACE.
+- Destructive operations only via explicit user approval or explicit deny rule.
+- Secrets/tokens masked in responses; raw secrets never written to the audit log.
 
-## Test / doğrulama stratejisi
-- Risk sınıflandırıcı: bilinen tehlikeli/güvenli diff örnekleriyle birim testleri
-  (kural katmanı deterministik → test edilebilir).
-- Ambient motoru: sahte Gateway ile üç-kova karar testleri.
-- E2E: spike script'lerinin ürünleşmiş hali — gerçek Crew'de görev → filtre → onay.
-- Demo provası: gerçek Echo/simülasyonda kahvaltı senaryosu.
+## Test / verification strategy
+- Risk classifier: unit tests over known dangerous/safe diff samples (the rule
+  layer is deterministic and testable).
+- Ambient engine: three-bucket decision tests against a fake Gateway.
+- E2E: the productized version of the spike scripts — real Crew task -> filter -> approve.
+- Demo rehearsal: the breakfast scenario on a real Echo/simulation.
 
-## Açık tasarım soruları (tasks'tan önce netleşecek)
-1. Ambient polling aralığı? (öneri: 2-3sn; deny-timeout ~60sn olduğu için bol.)
-2. Risk sınıflandırmada Bedrock ne sıklıkta? (öneri: sadece kural "net değil" derse
-   → maliyet/latency düşük.)
-3. Simülasyon arayüzü web mi terminal mi? (öneri: web — demo görselliği + rich card yolu.)
-4. "Durdur" (R6.4) native olmadığından: resolve etmeyip bekletmek yeterli mi,
-   yoksa slot'a explicit pause mesajı mı? (tasks'ta spike ile netleşir.)
+## Open design questions (to resolve before tasks)
+1. Ambient poll interval? (proposed: 2-3s; deny-timeout ~60s leaves ample margin.)
+2. How often does risk classification call Bedrock? (proposed: only when rules say
+   "unclear" -> low cost/latency.)
+3. Simulation interface web or terminal? (proposed: web — demo visuals + rich card path.)
+4. "Pause" (R6.4) is not native: is not-resolving-and-holding enough, or an
+   explicit pause message to the slot? (to be resolved in tasks via spike.)

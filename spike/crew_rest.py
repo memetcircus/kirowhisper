@@ -1,10 +1,9 @@
-"""Minimal Crew Gateway REST istemcisi — auth query ?token= ile.
-Token'ı `kirocrew token` çıktısından okur. Sadece spike doğrulaması için.
+"""Minimal Crew Gateway REST helper — auth via query ?token=.
+Reads the token from `kirocrew token` output. For spike verification only.
 """
 import json
 import subprocess
 import urllib.request
-import urllib.parse
 
 BASE = "http://localhost:5476"
 

@@ -1,27 +1,27 @@
 # Crew Spike — feasibility proof
 
-Kiro Crew Gateway'e programatik erişimi ve **insan-döngüde onay** akışını doğrulayan
-tek seferlik keşif scriptleri. Ürün kodu DEĞİL — KiroWhisper'ın teknik olarak
-mümkün olduğunu kanıtlamak için yazıldı.
+One-off exploration scripts that verify programmatic access to the Kiro Crew
+Gateway and the **human-in-the-loop approval** flow. NOT product code — written to
+prove that KiroWhisper is technically feasible.
 
-## Ne kanıtlandı
-- `test_1_connect.py` — Gateway bağlantısı (auth araştırması).
-- `test_2_pull.py` — `spawn` + durum okuma (PULL / "Kiro ne durumda?").
-- `test_3_approval.py` / `test_3b_resolve.py` — bekleyen onayı bulma + çözme.
-- `test_4_e2e.py` — **UÇTAN UCA:** görev → onay yakala → programatik approve →
-  dosya gerçekten oluştu. Projenin kalbinin kanıtı.
+## What was proven
+- `test_1_connect.py` — Gateway connection (auth investigation).
+- `test_2_pull.py` — `spawn` + reading status (PULL / "what's Kiro up to?").
+- `test_3_approval.py` / `test_3b_resolve.py` — finding + resolving a pending approval.
+- `test_4_e2e.py` — **END TO END:** task -> catch approval -> programmatic approve ->
+  the file actually got created. Proof of the project's heart.
 
-## Çalıştırma (yerel Crew Gateway gerektirir)
+## Running (requires a local Crew Gateway)
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install aiohttp    # test_1 için; diğerleri sadece stdlib + `kirocrew token`
+pip install aiohttp    # for test_1; the others use only stdlib + `kirocrew token`
 python3 test_4_e2e.py
 ```
 
-## Bulgular
-Ayrıntılı sonuçlar: `../docs/PROJECT_NOTES.md` → "CREW SPIKE SONUÇLARI" bölümü.
-Auth: `kirocrew token` → JWT → istekte `?token=<JWT>` query param + `Origin` header.
-Onay çöz: `POST /api/chat/slots/<slot>/approve {"action":"approved","request_id":...}`.
-Kritik tuzak: `action` **"approved"** olmalı (geçmiş zaman); "approve" sessizce reddeder.
+## Findings
+Auth: `kirocrew token` -> JWT -> requests carry `?token=<JWT>` query param + `Origin` header.
+Resolve approval: `POST /api/chat/slots/<slot>/approve {"action":"approved","request_id":...}`.
+Critical gotcha: `action` must be **"approved"** (past tense); "approve" silently rejects.
 
-> Not: Bu scriptler gizli değer İÇERMEZ; token runtime'da `kirocrew token`'dan alınır.
+> Note: these scripts contain NO secret values; the token is fetched at runtime
+> from `kirocrew token`.
