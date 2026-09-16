@@ -99,7 +99,9 @@ class Summarizer:
         tail = ""
         if surfaced:
             n = surfaced
-            tail = f"{n} decision{'s' if n != 1 else ''} {'are' if n != 1 else 'is'} waiting for you"
+            noun = "decision" if n == 1 else "decisions"
+            verb = "is" if n == 1 else "are"
+            tail = f"{n} {noun} {verb} waiting for you"
 
         if handled and tail:
             return "I " + _join_spoken(handled) + f", and {tail}."

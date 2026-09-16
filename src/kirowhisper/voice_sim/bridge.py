@@ -29,6 +29,7 @@ from starlette.routing import Route
 from ..gateway_client import GatewayError
 from ..mcp_server import KiroWhisperServices
 from ..models import DecisionAction, PendingDecision, RiskLevel
+from . import tts
 
 _STATIC = Path(__file__).parent / "static"
 
@@ -163,6 +164,13 @@ class VoiceBridge:
                        "ask about anything high-risk.", "ok": True}
         )
 
+    async def speak(self, request: Request):
+        """Speak text through the host TTS (macOS `say`). Reliable server-side voice."""
+        body = await _json(request)
+        text = str(body.get("text", ""))
+        ok = await tts.speak(text)
+        return JSONResponse({"ok": ok, "engine": "say" if tts.available() else "none"})
+
     async def events(self, _request: Request):
         async def stream():
             while True:
@@ -179,6 +187,7 @@ class VoiceBridge:
             Route("/api/approve", self.approve, methods=["POST"]),
             Route("/api/reject", self.reject, methods=["POST"]),
             Route("/api/trust", self.trust, methods=["POST"]),
+            Route("/api/speak", self.speak, methods=["POST"]),
             Route("/events", self.events),
         ])
 

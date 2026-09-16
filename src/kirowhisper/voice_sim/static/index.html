@@ -77,22 +77,40 @@ function setRing(state) { ring.className = 'ring ' + state; }
 function speak(text) {
   if (!text) return;
   sayEl.textContent = text;
+  // Pause listening while we speak so the system doesn't hear its own voice.
+  speaking = true;
+  try { if (recog) recog.stop(); } catch (e) {}
+  setRing('speaking');
+
+  const resume = () => {
+    speaking = false;
+    if (listening) { setRing('listening'); try { recog.start(); } catch (e) {} }
+    else { setRing('idle'); }
+  };
+
+  // Primary: reliable server-side TTS (macOS `say`). Fall back to browser TTS.
+  fetch('/api/speak', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ text }) })
+    .then(r => r.json())
+    .then(res => { if (!res.ok) browserSpeak(text, resume); else resume(); })
+    .catch(() => browserSpeak(text, resume));
+}
+
+function browserSpeak(text, done) {
+  if (!('speechSynthesis' in window)) { done(); return; }
   try {
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1.05;
-    // Pause listening while we speak so the system doesn't hear its own voice.
-    speaking = true;
-    try { if (recog) recog.stop(); } catch (e) {}
-    setRing('speaking');
-    u.onend = () => {
-      speaking = false;
-      // Resume hands-free listening after we finish speaking.
-      if (listening) { setRing('listening'); try { recog.start(); } catch (e) {} }
-      else { setRing('idle'); }
-    };
     speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.05; u.lang = 'en-US';
+    u.onend = done; u.onerror = done;
     speechSynthesis.speak(u);
-  } catch (e) { speaking = false; setRing(listening ? 'listening' : 'idle'); }
+    setTimeout(() => { try { speechSynthesis.resume(); } catch (e) {} }, 120);
+  } catch (e) { done(); }
+}
+
+if ('speechSynthesis' in window) {
+  speechSynthesis.getVoices();
+  speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
 }
 
 // ---- Backend calls ----
@@ -189,10 +207,25 @@ if (SR) {
   };
 }
 
+let ttsUnlocked = false;
+function unlockTTS() {
+  // Browsers block speechSynthesis until a user gesture. Speak an empty
+  // utterance inside the click so later (programmatic) speech is allowed.
+  if (ttsUnlocked) return;
+  try {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    speechSynthesis.speak(u);
+    ttsUnlocked = true;
+  } catch (e) {}
+}
+
 function startListening() {
+  unlockTTS();  // this runs inside the ring click (a user gesture)
   if (!recog) { speak("Speech recognition isn't available. Use Chrome, or the buttons."); return; }
   listening = true;
   try { recog.start(); } catch (e) {}
+  speak("Listening.");   // immediate audible confirmation that sound works
 }
 function stopListening() {
   listening = false;

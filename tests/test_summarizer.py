@@ -89,5 +89,6 @@ def test_ambient_summary_phrasing():
     s = Summarizer(BedrockConfig())
     out = s.ambient_summary(auto_passed=19, blocked=3, surfaced=1)
     assert out == "I passed 19 as safe and blocked 3, and 1 decision is waiting for you."
-    assert s.ambient_summary(auto_passed=0, blocked=0, surfaced=3) == "3 decisions are waiting for you."
+    only3 = s.ambient_summary(auto_passed=0, blocked=0, surfaced=3)
+    assert only3 == "3 decisions are waiting for you."
     assert s.ambient_summary(auto_passed=0, blocked=0, surfaced=0) == "No decisions to report."
