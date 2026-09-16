@@ -37,7 +37,12 @@ class BedrockClassifier:
         if self._client is None:
             import boto3  # lazy: only needed at runtime, not for unit tests
 
-            self._client = boto3.client("bedrock-runtime", region_name=self._cfg.region)
+            session = (
+                boto3.Session(profile_name=self._cfg.profile)
+                if self._cfg.profile
+                else boto3.Session()
+            )
+            self._client = session.client("bedrock-runtime", region_name=self._cfg.region)
         return self._client
 
     def classify(self, approval: Approval) -> RiskAssessment:
@@ -89,3 +94,8 @@ class BedrockClassifier:
     def as_model_classify(self):
         """Return a callable suitable for RiskClassifier(model_classify=...)."""
         return self.classify
+
+    @property
+    def runtime_client(self):
+        """The underlying bedrock-runtime client (created lazily). Shareable."""
+        return self._get_client()

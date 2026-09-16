@@ -63,6 +63,8 @@ class BedrockConfig:
     """
 
     region: str = field(default_factory=lambda: _env("AWS_REGION", "us-east-1"))
+    # Optional named AWS profile (e.g. "kirowhisper"). Empty = default credentials.
+    profile: str = field(default_factory=lambda: _env("KIROWHISPER_AWS_PROFILE", ""))
     # Fast/cheap model for the common path (risk classify + short summaries).
     fast_model_id: str = field(
         default_factory=lambda: _env(

@@ -28,9 +28,9 @@ def build_services(
     if use_bedrock:
         bedrock = BedrockClassifier(cfg.bedrock)
         classifier = RiskClassifier(model_classify=bedrock.as_model_classify())
-        # Summarizer shares a bedrock-runtime client lazily; pass None to keep it
-        # on the deterministic fallback unless a client is wired explicitly.
-        summarizer = Summarizer(cfg.bedrock, bedrock_client=None)
+        # Share the same bedrock-runtime client with the summarizer so it produces
+        # real voice-friendly phrasing (falls back deterministically on any error).
+        summarizer = Summarizer(cfg.bedrock, bedrock_client=bedrock.runtime_client)
     else:
         classifier = RiskClassifier()  # rules only; inconclusive -> UNKNOWN (safe)
         summarizer = Summarizer(cfg.bedrock)
