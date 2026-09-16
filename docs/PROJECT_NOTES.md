@@ -683,3 +683,160 @@ onaylıyor musun?' diye soruyor. Ekrana dönüp tek tek cevap vermek en büyük 
 - [ ] Billing budget/alarm kur (maliyet güvenliği).
 - [ ] Bedrock model access (us-east-1, Nova 2 Lite) — Bedrock'a başlarken.
 - [ ] Crew spike (projenin beyni) — henüz başlanmadı.
+
+---
+---
+
+# 🔬 Crew Spike PLANI (keşif tamamlandı — kod öncesi son netlik)
+
+> Kaynak: KiroCrew README (kurulum) + kirocrew-client-py/client.py (SDK) +
+> docs/app-kit/api-reference.md (Gateway API) + messaging/approval.py (approval davranışı).
+> Hepsi OKUNDU, hiçbir şey kurulmadı. Bu plan spike'ı hedefli yapmak için.
+
+## ⭐ EN KRİTİK BULGU: Approval API GERÇEKTEN VAR (notlar doğruymuş)
+Python client'ta yok AMA App Kit / Gateway API yüzeyinde var
+(docs/app-kit/api-reference.md → "Approvals"):
+- `approveAction(slotId, taskId)` → bekleyen tool aksiyonunu ONAYLA
+- `rejectAction(slotId, taskId)` → REDDET
+- `resolveApproval(approvalId, approved)` → ID ile çöz
+- `getApprovalMode()` / `setApprovalMode('auto'|'interactive')`
+- WebSocket event'leri (bize lazım): `approval`, `task_update`, `task_complete`,
+  `proactive_notification`, `subagent_done`
+→ Bunlar Gateway REST/WS uçları. Python client bunları expose etmiyor ama Gateway
+  HTTP olduğu için biz doğrudan REST çağırabiliriz (client'ı genişletir veya raw
+  fetch yaparız). Bu, "sesli onayı çalışan turn'e nasıl iletiriz" sorusunun CEVABI.
+
+## Approval davranışı (messaging/approval.py) — tasarımımızla birebir
+- **Deny on silence:** timeout'ta onay DENY'a düşer, asla otomatik approve olmaz.
+  → Bizim "timeout = güvenli/reddet" prensibimiz Crew'de ZATEN yerleşik.
+- Her onay bir session'a bağlı; başka chat'in tool'unu çözemez (yanlış onay koruması).
+- `approval_mode`: `interactive` (insan onaylar) | `auto`. Config'te
+  `agent.approval_mode` var.
+
+## Crew kurulumu (README'den net adımlar)
+- **Ön koşul:** `kiro-cli` kurulu + `kiro-cli login` yapılmış olmalı (model erişimi
+  buradan; Crew ajanı `kiro-cli`'yi ACP üzerinden sürüyor). Python 3.12+, Node 22+.
+- **En kolay yol (mac):** Desktop app indir (bundled Gateway başlatır) VEYA one-line:
+  `curl -fsSL https://download.crew.kiro.dev/cli.sh | sh`
+- Dashboard: `http://localhost:5476` (loopback, güvenli).
+- Doğrulama: `kirocrew doctor`, `kirocrew gateway`, `kirocrew logs`.
+- **KRİTİK:** Crew, model erişimi için **Kiro aboneliği/hesabı** ister (kiro-cli login).
+  Kullanıcının bunu teyit etmesi lazım — spike'ın ön koşulu bu.
+
+## Gerçek client SDK yüzeyi (kirocrew-client-py, teyitli)
+- Task: `spawn(task)`→id, `spawn_many`, `get_task_result(id)`, `list_subagents`,
+  `get_subagent_status`, `dispatch_agent(_async)`
+- Durum: `ping`, `get_status`, `get_system_info`
+- Slot/sohbet: `create_slot`, `send_message(slot,msg)`, `list_slots`
+- Bildirim: `send_notification(text)`  ← proaktif "meslektaş" pull tarafı
+- MCP: `register_mcp_server(name,command,args,env)`  ← kendi MCP server'ımızı Crew'e tanıtma
+- Memory/context/lessons/cron da var.
+- Auth: app-token (per-app `.app_secret` → token exchange) VEYA loopback'te token'sız.
+
+## 🎯 SPIKE ADIMLARI (kuruluma geçince — hedefli)
+Ön koşul: kiro-cli login + Crew kurulu + Gateway ayakta (localhost:5476).
+1. **Bağlantı:** Python `KiroCrewClient` ile `ping()` / `get_status()` → Gateway canlı mı.
+2. **PULL:** `spawn("küçük bir test görevi")` → `get_task_result(id)` /
+   `get_subagent_status(id)` ile durumu programatik oku. → "Kiro ne durumda?" temeli.
+3. **ONAY (kalp):** approval_mode=interactive iken, dosya yazma gibi bir tool
+   içeren görev başlat → WebSocket `approval` event'i geliyor mu izle →
+   `approveAction`/`rejectAction`/`resolveApproval` REST ucunu çağırıp turn'ü
+   çözebiliyor muyuz? (Client'ta yoksa raw REST ile.)
+4. **PROAKTİF sinyal:** `task_complete` / `proactive_notification` WS event'i
+   yakalanabiliyor mu → "meslektaş sana döner" (push) sahnesinin veri kaynağı.
+5. **MCP köprü testi (ops.):** `register_mcp_server` ile basit bir MCP server'ı
+   Crew'e tanıtıp tool'unun çağrıldığını gör.
+
+## Spike başarı kriteri
+1-3 çalışırsa proje teknik olarak KANITLANMIŞ olur → requirement + mimariye geçilir.
+3 (approval REST) çalışmazsa: alternatif = approval'ı `interactive` yerine akıllı
+`auto` + kendi guard katmanımızla ele almak (plan B).
+
+## Bekleyen ön koşul sorusu (kullanıcıya)
+- Kiro aboneliği/hesabı (kiro-cli login) var mı? Crew'in model çalıştırması buna bağlı.
+  Yoksa spike'ta Crew ajanı çalışmaz (Gateway kalkar ama görev yürütemez).
+
+---
+---
+
+# ✅✅ CREW SPIKE SONUÇLARI — PROJENİN KALBİ KANITLANDI (uçtan uca çalışıyor)
+
+> Kaynak: Kendi makinede canlı test (Crew v0.6.0, KIRO PRO+). spike/ klasöründe
+> test scriptleri. Bu, "proje teknik olarak gerçekleşebilir mi?" sorusuna
+> KESİN EVET cevabı. En kritik oturumlardan biri.
+
+## 🏆 Kanıtlanan uçtan uca akış (test_4_e2e.py)
+Bir agent dosya yazmak için onay istedi → biz PROGRAMATİK onayladık → dosya
+GERÇEKTEN oluştu ('WORKS'). Yani "sesle onayla" dediğimizde olacak şeyin tam
+mekanik kanıtı. **KiroWhisper teknik olarak mümkün ve gerçek.**
+
+## 🔑 Gateway erişimi — ÇÖZÜLDÜ (kritik teknik bilgi)
+- Gateway: `http://localhost:5476`, **loopback'te bile TOKEN ister** (v0.6.0 sıkı).
+- **Auth = query parametresi `?token=<JWT>`** (cookie/Bearer DEĞİL — client SDK
+  cookie kullandığı için başarısız oldu).
+- **Token nasıl alınır:** `kirocrew token` → `http://localhost:5476?token=<JWT>`
+  çıktısındaki JWT. Bu token `sub: local-app` ve TAM YETKİLİ (dashboard owner).
+- Dashboard-only endpoint'ler **`Origin: http://localhost:5476` header'ı ŞART**
+  (deny_non_dashboard_caller). `local-app` subject kabul ediliyor (standalone-local).
+- App-token'lar (`/api/apps/<app>/token`, X-App-Secret ile) kısıtlı — genel
+  endpoint'lere yetmiyor. `kirocrew token` yolu doğru olan.
+
+## 📡 Doğrulanan REST uçları (hepsi ?token= + Origin ile)
+- **PULL/durum:** `GET /api/status` → uptime, sessions, subagents. ✅
+- **Task başlat:** `POST /api/spawn {"task":"..."}` → `{"id","status":"spawned"}`. ✅
+- **Task durum:** `GET /api/spawn/<id>` → `{done, turns, awaiting_approval, elapsed, last_tool}`. ✅
+- **Slot:** `POST /api/chat/slots {"name":...}`, `GET /api/chat/slots/<slot>`,
+  `DELETE /api/chat/slots/<slot>`. ✅
+- **Mesaj gönder:** `POST /api/chat {"slot","message"}` — DİKKAT: senkron/uzun
+  yaşar (tool onayında dönmez); "ateşle-bekleme" (kısa timeout) ile kullan.
+- **Bekleyen onaylar (liste):** `GET /api/approvals` → `[{id, source, tool,
+  tool_input, tool_purpose, slot, ts}]`. ✅
+- **⭐ ONAY ÇÖZ (KALP):** `POST /api/chat/slots/<slot>/approve`
+  body: `{"action":"approved","request_id":"<approval_id>"}` → `{"ok":true}`. ✅
+
+## ⚠️⚠️ EN ÖNEMLİ TUZAK: action="approved" (geçmiş zaman!)
+chat_handlers.py satır 10691:
+`resolved = action if action in ("approved","approved_trust_reads") else "rejected"`
+→ `"approve"` gönderirsen SESSİZCE "rejected"e düşer! **"approved" olmalı.**
+Diğer action'lar: `rejected`, `trust` (slot'a kalan tool'ları oto-onayla =
+"artık hep onayla"), `trust_reads`, `trust_command`, `yolo`.
+
+## 📋 Onay verisi nereden okunur (akıllı özet girdisi)
+- Slot'un `pending_approval` alanı bizim testte hep None kaldı; GERÇEK veri
+  slot mesajlarında: `role:"permission"` mesajı + `meta.approval_id`.
+- Bir üstteki `role:"tool"` mesajında **`purpose`** (ör. "Create the requested
+  file with content HELLO") + `input` (diff) + `kind` var.
+- Permission meta'sında: `tool_title`, `tool_input` (diff), `is_read_only`,
+  `is_shell` → **güvenli onay için risk sınıflandırmasının ham verisi hazır.**
+- EN SON permission mesajını al (geçmişteki eskiyi değil); slot'u taze başlat.
+
+## ⏱️ "Deny on silence" gerçek — zamanlama önemli
+- Onaylanmayan tool ~60-75sn sonra timeout'la DENY olur (Crew'in güvenli
+  varsayılanı, tasarımımızla birebir). Approve'u bu pencereden ÖNCE göndermeli.
+- Onay ~5-6sn içinde beliriyor; 1sn aralıkla yoklamak yeterli.
+
+## ⚙️ Config
+- `agent.approval_mode`: `auto` (default, oto-onay) | `interactive` (insan onayı).
+  Spike için `kirocrew config set agent.approval_mode interactive` yaptık.
+  → Bizim proje `interactive` modda çalışacak (onay akışı için şart).
+  NOT: Şu an makinede interactive bırakıldı.
+
+## 🧩 Ortam kurulumu notları
+- Python 3.14 sistemde; `kirocrew-client` PyPI'da YOK (repo-içi paket). Biz
+  doğrudan REST (urllib) kullandık — client SDK'ya bağımlı değiliz, bu daha temiz.
+- `kirocrew` CLI kurulu (`~/.local/bin/kirocrew`), Gateway ile auth'u kendi halleder.
+- spike/ klasörü .gitignore'a eklendi (venv + token'lı test scriptleri push edilmez).
+
+## 🎯 Mimari için doğrulanan tasarım
+KiroWhisper MCP server (Python) → Crew Gateway REST (`?token=` + Origin):
+- "Kiro ne durumda?" → GET /api/status + GET /api/approvals (bekleyen onaylar)
+- Akıllı özet → permission meta (tool_title/purpose/input/is_shell) → Bedrock ile özetle
+- "Onayla/Reddet" → POST /api/chat/slots/<slot>/approve {action:approved|rejected}
+- Güvenli onay → is_read_only/is_shell/diff'e göre risk sınıfı + çift-teyit
+- "artık hep onayla" → action:"trust"
+- Token → `kirocrew token` (veya app-secret token exchange, ileride app'leşince)
+
+## ▶️ Sıradaki adım
+Kalp kanıtlandı → artık requirement dokümanı (user story + acceptance criteria)
++ mimari yazılabilir. Sonra kendi MCP server iskeleti + Crew köprüsü (bu REST
+çağrılarını saran) + Bedrock özet katmanı.

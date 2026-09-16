@@ -3,6 +3,12 @@ docs/PRIVATE_NOTES.md
 PRIVATE_NOTES.md
 **/PRIVATE_*.md
 
+# === Spike / deneme ortamı (venv, geçici test dosyaları) ===
+spike/.venv/
+spike/kirocrew_client/
+spike/__pycache__/
+**/__pycache__/
+
 # === Secrets / credentials ===
 .env
 .env.*
