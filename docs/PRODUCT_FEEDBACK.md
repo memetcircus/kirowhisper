@@ -100,14 +100,35 @@ and the system replies aloud (TTS), all in the browser with zero dependencies.
 the user's *own* live voice in and a real-time voice out, not a pre-recorded track.
 Perfect for a rules-compliant Alexa+ simulation.
 
-**What needs work.** `SpeechRecognition` support and quality vary by browser (best in
-Chromium). Recognition of short command words is good but not perfect, which is
-exactly why our high-risk flow requires an explicit confirmation.
+**What needs work.**
+- **`SpeechRecognition` quality varies by browser** (best in Chromium). Recognition
+  of short command words is good but not perfect, which is exactly why our high-risk
+  flow requires an explicit confirmation.
+- **`speechSynthesis` failed silently on our setup.** On a Chrome/macOS machine with
+  199 voices reported by `getVoices()`, calling `speechSynthesis.speak(...)` produced
+  no audio at all — no error, no `onerror`, nothing. There is no reliable signal to
+  tell "spoke" from "silently did nothing," so an app can't even detect the failure.
+  We stopped fighting it and moved output to the host's own TTS (macOS `say`) behind
+  a `/api/speak` endpoint, which was instantly reliable. A hard failure (or an
+  accurate `onerror`) would have saved a long debugging session.
+- **Self-hearing feedback loop.** With the mic open while the system speaks, TTS
+  output was picked up by `SpeechRecognition` as a new "command," which re-triggered
+  speech — an endless loop. We had to add explicit guards (ignore results while
+  speaking, a short cooldown after speaking, and dedup of repeated phrases). A
+  built-in "don't listen to my own output" mode would be a natural feature for any
+  hands-free voice UI.
+- **Overlapping playback needs its own guard.** Multiple browser tabs (or rapid
+  requests) each triggered speech at once, so two voices talked over each other. We
+  serialized server-side TTS (cancel the current utterance before starting the next)
+  so only one voice is ever audible regardless of how many callers fire.
 
-**Onboarding.** Trivial — a few dozen lines of vanilla JS.
+**Onboarding.** Trivial to start — a few dozen lines of vanilla JS. The hard part was
+not the API surface but the silent-failure and feedback-loop behaviors above, which
+only show up once you wire real hands-free interaction.
 
-**Would we build with it again?** For a browser-based voice demo, yes. For production
-we'd move to a dedicated STT/TTS (or Crew's built-in Piper/Transcribe voice).
+**Would we build with it again?** For a browser-based voice demo, yes — with the
+caveat that reliable output meant falling back to host TTS. For production we'd move
+to a dedicated STT/TTS (or Crew's built-in Piper/Transcribe voice).
 
 ---
 

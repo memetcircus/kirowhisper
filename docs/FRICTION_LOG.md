@@ -90,13 +90,46 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
 - **Suggestion:** A proactive/notification channel for add-ons would unlock this class
   of "ambient assistant" experiences.
 
+### F8 — Browser `speechSynthesis` produced no audio, silently
+- **Task:** Speak the assistant's replies aloud in the browser (TTS).
+- **Steps:** Called `speechSynthesis.speak(new SpeechSynthesisUtterance(text))` after a
+  user gesture; confirmed `getVoices()` returned 199 voices; tried `cancel()` first,
+  set `lang`/`rate`, listened for `onend`/`onerror`.
+- **Expected:** Audible speech, or at least an `onerror` when it can't play.
+- **Actual:** No audio at all on a Chrome/macOS setup — and no error fired, so the app
+  had no signal that anything failed. "Spoke" and "silently did nothing" are
+  indistinguishable.
+- **Severity:** High (broke the entire voice-output half of the demo).
+- **Workaround:** Moved TTS server-side to the host's own `say` via a `/api/speak`
+  endpoint, and disabled browser speech entirely so it can never fire. Instantly reliable.
+- **Suggestion:** Surface a real failure (throw, or fire `onerror`) when synthesis can't
+  produce audio, so apps can fall back deterministically.
+
+### F9 — Hands-free STT hears its own TTS (feedback loop)
+- **Task:** Keep the mic open for continuous, hands-free commands while also speaking replies.
+- **Steps:** `SpeechRecognition` with `continuous = true`, auto-restarting on `onend`,
+  speaking replies through TTS while the session stayed "listening."
+- **Expected:** The system hears the user, not itself.
+- **Actual:** TTS output was captured as a new "command" (e.g. our own words matched
+  "no"/"reject"), which triggered another reply, which was heard again — an endless
+  loop. Separately, multiple open tabs each spoke at once, so voices overlapped.
+- **Severity:** Medium.
+- **Workaround:** Ignore recognition results while speaking, add a short cooldown after
+  speech before re-opening the mic, dedup identical phrases, and serialize server-side
+  TTS so only one voice plays at a time. Headphones remove the acoustic path entirely.
+- **Suggestion:** A built-in "suppress self-audio while speaking" (echo/barge-in
+  handling) would make hands-free voice UIs far easier to build correctly.
+
 ---
 
 ## Severity tally
-- High: F1, F2
-- Medium: F3, F4, F5, F7
+- High: F1, F2, F8
+- Medium: F3, F4, F5, F7, F9
 - Low: F6
 
 Most frictions were about **discovery** (how to talk to the Gateway, which action
 string, where the pending approval lives) rather than capability gaps — the
 capabilities were all there. Better client docs would remove the majority of these.
+The browser voice frictions (F8, F9) were the exception: real behavioral gaps in the
+Web Speech API that only surface once you wire up genuine hands-free interaction, and
+they pushed us to a more reliable host-TTS architecture.
