@@ -154,8 +154,42 @@ class AmbientEngine:
         self._pending[pending.approval.request_id] = pending
 
     def set_session_trust(self, trust: bool) -> None:
-        """Enable/disable auto-approval of low-risk steps for this session."""
+        """Enable/disable auto-approval of low-risk steps for this session.
+
+        Note: this only changes how *future* approvals are routed. To also clear
+        low-risk items already surfaced, call ``apply_trust_to_pending``.
+        """
         self._session_trust = trust
+
+    async def apply_trust_to_pending(self) -> int:
+        """Retroactively auto-approve already-surfaced LOW decisions under trust.
+
+        When the user says "trust" mid-session, the low-risk items already waiting
+        should clear silently too — otherwise trust would only affect brand-new
+        approvals and the queue would stay noisy. HIGH/UNKNOWN always stay.
+        Returns the number of pending items auto-approved.
+        """
+        if not self._session_trust:
+            return 0
+        cleared = 0
+        for rid, pending in list(self._pending.items()):
+            action, _reason = decide(
+                pending.risk,
+                session_trust=True,
+                explicit_deny=self._deny_check(pending.approval),
+            )
+            if action != DecisionAction.AUTO_APPROVE:
+                continue  # HIGH / UNKNOWN stay surfaced — trust never lowers safety
+            # Remove first; _safe_resolve puts it back only if the Gateway fails.
+            self._pending.pop(rid, None)
+            await self._safe_resolve(pending.approval, pending.risk, approved=True)
+            if rid in self._pending:
+                continue  # resolve failed and was re-queued -> leave it surfaced
+            self._counts[DecisionAction.AUTO_APPROVE.value] += 1
+            self._audit.record(rid, pending.risk.level, DecisionAction.AUTO_APPROVE,
+                               "trust granted mid-session", by="user")
+            cleared += 1
+        return cleared
 
     def set_on_surface(self, callback: SurfaceCallback) -> None:
         """Register the proactive callback fired when a decision is surfaced."""

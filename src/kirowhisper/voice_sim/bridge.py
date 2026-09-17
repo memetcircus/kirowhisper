@@ -159,10 +159,21 @@ class VoiceBridge:
 
     async def trust(self, _request: Request):
         self._svc.ambient.set_session_trust(True)
-        return JSONResponse(
-            {"spoken": "Session trusted. I'll auto-approve low-risk steps and still "
-                       "ask about anything high-risk.", "ok": True}
-        )
+        # Also clear the low-risk items already waiting, so trust takes effect now.
+        try:
+            cleared = await self._svc.ambient.apply_trust_to_pending()
+        except GatewayError:
+            cleared = 0
+        detail, rid = self._describe_next()
+        if cleared:
+            head = (f"Done. I auto-approved {cleared} low-risk "
+                    f"{'step' if cleared == 1 else 'steps'} and I'll keep handling "
+                    f"low-risk ones quietly. I'll still ask about anything high-risk.")
+        else:
+            head = ("Session trusted. I'll auto-approve low-risk steps and still ask "
+                    "about anything high-risk.")
+        spoken = head if rid is None else f"{head} {detail}"
+        return JSONResponse({"spoken": spoken, "ok": True, "current": rid})
 
     async def speak(self, request: Request):
         """Speak text through the host TTS (macOS `say`). Reliable server-side voice."""
