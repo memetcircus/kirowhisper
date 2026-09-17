@@ -94,7 +94,13 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         tail = f" Crew has {sessions} active session(s)." if sessions is not None else ""
         return ambient_line + tail
 
-    @mcp.tool(description="What needs your decision right now, spoken and prioritized.")
+    @mcp.tool(
+        description=(
+            "List (read only) the decisions waiting, spoken and prioritized. This only "
+            "reads; it does NOT act. To actually approve or reject by voice, use "
+            "triage_next_decision instead."
+        )
+    )
     async def get_pending_decisions() -> str:
         pend = svc.ambient.pending_decisions()
         if not pend:
@@ -109,10 +115,13 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
 
     @mcp.tool(
         description=(
-            "Handle the single most important decision waiting for the user, by "
-            "voice. Speaks the top decision (highest risk first) and asks whether to "
-            "approve, reject, or skip. Use this for a hands-free 'what needs me?' "
-            "flow; it asks the user a question and acts on their answer in one call."
+            "PRIMARY tool for handling decisions by voice. Call this whenever the user "
+            "wants to know what needs them, or wants to approve, reject, allow, deny, "
+            "confirm, or decide on anything Crew is waiting on. It speaks the single "
+            "most important decision (highest risk first) and asks the user 'approve, "
+            "reject, or skip?', then acts on their spoken answer in this same call — no "
+            "request id needed. Prefer this over approve/reject/get_pending_decisions "
+            "for any hands-free 'what needs me?' or approval request."
         )
     )
     async def triage_next_decision(ctx: Context) -> str:
@@ -181,8 +190,11 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         return f"I heard '{answer}'. Please say approve, reject, or skip."
 
     @mcp.tool(
-        description="Approve a surfaced decision by its request_id. "
-        "Returns a confirmation prompt first if the action is high-risk."
+        description=(
+            "Low-level: approve a specific decision by its exact request_id. Only use "
+            "when you already have a request_id from a previous list. For normal voice "
+            "approval, use triage_next_decision instead (it needs no id)."
+        )
     )
     async def approve(request_id: str, confirmed: bool = False) -> str:
         pending = svc.ambient.take_pending(request_id)
@@ -202,7 +214,13 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
                          "user approved", by="user")
         return "Approved. Continuing."
 
-    @mcp.tool(description="Reject a surfaced decision by its request_id (skip this step).")
+    @mcp.tool(
+        description=(
+            "Low-level: reject a specific decision by its exact request_id. Only use "
+            "when you already have a request_id. For normal voice rejection, use "
+            "triage_next_decision instead (it needs no id)."
+        )
+    )
     async def reject(request_id: str) -> str:
         pending = svc.ambient.take_pending(request_id)
         if pending is None:
