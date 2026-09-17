@@ -20,6 +20,11 @@ async def _run_mcp() -> None:
     server, services = build_app()
     services.ambient.start()
     try:
+        # SSE mode (json_response=False, the default): elicitation is a server->client
+        # request that needs the back-channel the SSE stream provides. json_response
+        # has no back-channel, so ctx.elicit() raises NoBackChannelError. The tradeoff
+        # is that tunnels drop idle SSE streams; we keep the stream alive during an
+        # elicitation by pinging the client every ~15s (see triage_next_decision).
         await server.run_streamable_http_async()
     finally:
         await services.ambient.stop()

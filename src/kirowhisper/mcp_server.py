@@ -7,25 +7,24 @@ Gateway + Ambient Awareness engine at runtime — not merely named in a README.
 Tools:
   - get_status            : overall status + ambient summary (passed/blocked/waiting)
   - get_pending_decisions : the decisions Ambient surfaced, voice-friendly
-  - triage_next_decision  : elicitation-driven; asks approve/reject/skip for the top
-                            decision in one call (the natural voice flow on Alexa+)
-  - approve               : approve a surfaced decision (double-confirm hint if HIGH)
-  - reject                : reject a surfaced decision (skip); pause/cancel handled by caller
+  - approve_top           : approve the highest-risk pending decision (no id needed)
+  - reject_top            : reject/skip the highest-risk pending decision (no id needed)
+  - approve               : approve a surfaced decision by request_id (low-level)
+  - reject                : reject a surfaced decision by request_id (low-level)
   - trust_session         : auto-approve remaining low-risk steps this session
   - summarize             : voice-friendly summary of a task/diff
 
-The approve/reject pair is a two-call surface (get the id, then act on it) used by
-the web voice simulation. triage_next_decision is a single elicitation-driven call
-that voice clients (e.g. the Alexa Skill MCP bridge) drive naturally: the tool asks
-the user a question mid-call and resolves the decision from their spoken answer.
+The voice flow is a two-call surface designed to be robust on assistants like
+Alexa (no MCP elicitation back-channel across turns): get_pending_decisions to
+hear the top decision, then approve_top / reject_top to act on it. approve/reject
+by request_id remain for callers that already hold an id.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mcp.server.mcpserver import Context, MCPServer
-from pydantic import BaseModel, Field
+from mcp.server.mcpserver import MCPServer
 
 from .ambient import AmbientEngine
 from .audit import AuditLog
@@ -33,25 +32,6 @@ from .config import Config
 from .gateway_client import GatewayClient, GatewayError
 from .models import DecisionAction, RiskLevel
 from .summarizer import Summarizer
-
-
-class _TriageAnswer(BaseModel):
-    """Flat, primitive-only elicitation schema (bridge requirement).
-
-    The user's spoken answer to 'approve, reject, or skip?'. A single enum-like
-    string keeps the Alexa turn to one spoken question with a short answer.
-    """
-
-    decision: str = Field(
-        description="One of: approve, reject, or skip.",
-        json_schema_extra={"enum": ["approve", "reject", "skip"]},
-    )
-
-
-class _ConfirmAnswer(BaseModel):
-    """Second confirmation for high-risk actions: a plain yes/no."""
-
-    yes: bool = Field(description="True to proceed with the high-risk action, false to cancel.")
 
 
 @dataclass
@@ -96,9 +76,11 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
 
     @mcp.tool(
         description=(
-            "List (read only) the decisions waiting, spoken and prioritized. This only "
-            "reads; it does NOT act. To actually approve or reject by voice, use "
-            "triage_next_decision instead."
+            "THE tool to call for 'what needs my decision', 'what's waiting', 'anything "
+            "for me', or to review/hear pending decisions. Speaks the most important "
+            "decision first (highest risk) and tells the user to say 'approve it' or "
+            "'reject it'. One quick call, no follow-up question — always safe on a "
+            "voice assistant. After the user answers, call approve_top or reject_top."
         )
     )
     async def get_pending_decisions() -> str:
@@ -107,93 +89,76 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
             return "Nothing needs you right now."
         # HIGH first, then the rest; voice-limit to 3 (NFR-3).
         pend.sort(key=lambda p: 0 if p.risk.level == RiskLevel.HIGH else 1)
-        lines = []
-        for i, p in enumerate(pend[:3], 1):
-            lines.append(f"{i}. " + svc.summarizer.approval_summary(p.approval, p.risk))
-        more = "" if len(pend) <= 3 else f" And {len(pend) - 3} more."
-        return " ".join(lines) + more
+        total = len(pend)
+        top = pend[0]
+        # fast=True: Alexa-turn latency budget; use pre-computed/deterministic text.
+        summary = svc.summarizer.approval_summary(top.approval, top.risk, fast=True)
+        head = f"{total} decisions are waiting. " if total > 1 else ""
+        prompt = " Say 'approve it' to allow this, or 'reject it' to skip it."
+        return f"{head}First: {summary}{prompt}"
 
     @mcp.tool(
         description=(
-            "PRIMARY tool for handling decisions by voice. Call this whenever the user "
-            "wants to know what needs them, or wants to approve, reject, allow, deny, "
-            "confirm, or decide on anything Crew is waiting on. It speaks the single "
-            "most important decision (highest risk first) and asks the user 'approve, "
-            "reject, or skip?', then acts on their spoken answer in this same call — no "
-            "request id needed. Prefer this over approve/reject/get_pending_decisions "
-            "for any hands-free 'what needs me?' or approval request."
+            "Approve the single most important decision currently waiting (highest "
+            "risk first) — no request id needed. Use when the user says approve, yes, "
+            "allow, confirm, or 'do it' after hearing a decision. One quick call, "
+            "reliable on Alexa."
         )
     )
-    async def triage_next_decision(ctx: Context) -> str:
+    async def approve_top() -> str:
         pend = svc.ambient.pending_decisions()
         if not pend:
-            return "Nothing needs you right now."
-        # Highest risk first so the user is asked about the riskiest thing first.
+            return "There's nothing waiting for you right now."
         pend.sort(key=lambda p: 0 if p.risk.level == RiskLevel.HIGH else 1)
-        total = len(pend)
         top = pend[0]
-        summary = svc.summarizer.approval_summary(top.approval, top.risk)
-        is_high = top.risk.level == RiskLevel.HIGH
-
         rid = top.approval.request_id
-        prefix = f"{total} decisions are waiting. " if total > 1 else ""
-        risk_note = " This is high-risk." if is_high else ""
-        question = f"{prefix}{summary}{risk_note} Approve, reject, or skip?"
+        taken = svc.ambient.take_pending(rid)
+        if taken is None:
+            return "That one was already handled."
+        try:
+            await svc.gateway.approve(taken.approval.slot, rid)
+        except GatewayError as exc:
+            svc.ambient.requeue(taken)
+            return f"I couldn't apply the approval: {exc}. It's still pending."
+        svc.audit.record(rid, taken.risk.level, DecisionAction.AUTO_APPROVE,
+                         "user approved (voice, top)", by="user")
+        remaining = len(svc.ambient.pending_decisions())
+        tail = f" {remaining} more waiting." if remaining else ""
+        return f"Approved. Continuing.{tail}"
 
-        result = await ctx.elicit(message=question, schema=_TriageAnswer)
-        if result.action != "accept" or result.data is None:
-            # User declined/cancelled the question itself: leave everything pending.
-            return "Okay, I'll leave it for now."
-
-        answer = (result.data.decision or "").strip().lower()
-
-        if answer in ("skip", "later", "next"):
-            return f"Skipped. {total - 1} decision(s) still waiting." if total > 1 else "Skipped."
-
-        if answer in ("reject", "no", "deny", "don't", "stop"):
-            taken = svc.ambient.take_pending(rid)
-            if taken is None:
-                return "That one was already handled."
-            try:
-                await svc.gateway.reject(taken.approval.slot, rid)
-            except GatewayError as exc:
-                svc.ambient.requeue(taken)
-                return f"I couldn't apply the rejection: {exc}. It's still pending."
-            svc.audit.record(rid, taken.risk.level, DecisionAction.AUTO_BLOCK,
-                             "user rejected (voice)", by="user")
-            return "I didn't do it. The task can continue past this step."
-
-        if answer in ("approve", "yes", "confirm", "approved", "ok", "okay", "go ahead"):
-            # High-risk needs an explicit second confirmation.
-            if is_high:
-                confirm = await ctx.elicit(
-                    message=f"{summary} This is high-risk and cannot be undone. "
-                            "Are you sure? Yes or no.",
-                    schema=_ConfirmAnswer,
-                )
-                if confirm.action != "accept" or confirm.data is None or not confirm.data.yes:
-                    return "Okay, I won't do it. Leaving it for you to decide."
-            taken = svc.ambient.take_pending(rid)
-            if taken is None:
-                return "That one was already handled."
-            try:
-                await svc.gateway.approve(taken.approval.slot, rid)
-            except GatewayError as exc:
-                svc.ambient.requeue(taken)
-                return f"I couldn't apply the approval: {exc}. It's still pending."
-            svc.audit.record(rid, taken.risk.level, DecisionAction.AUTO_APPROVE,
-                             "user approved (voice)", by="user")
-            remaining = total - 1
-            tail = f" {remaining} more waiting." if remaining > 0 else ""
-            return f"Approved. Continuing.{tail}"
-
-        return f"I heard '{answer}'. Please say approve, reject, or skip."
+    @mcp.tool(
+        description=(
+            "Reject (skip) the single most important decision currently waiting — no "
+            "request id needed. Use when the user says reject, no, deny, skip, or "
+            "'don't' after hearing a decision. One quick call, reliable on Alexa."
+        )
+    )
+    async def reject_top() -> str:
+        pend = svc.ambient.pending_decisions()
+        if not pend:
+            return "There's nothing waiting for you right now."
+        pend.sort(key=lambda p: 0 if p.risk.level == RiskLevel.HIGH else 1)
+        top = pend[0]
+        rid = top.approval.request_id
+        taken = svc.ambient.take_pending(rid)
+        if taken is None:
+            return "That one was already handled."
+        try:
+            await svc.gateway.reject(taken.approval.slot, rid)
+        except GatewayError as exc:
+            svc.ambient.requeue(taken)
+            return f"I couldn't apply the rejection: {exc}. It's still pending."
+        svc.audit.record(rid, taken.risk.level, DecisionAction.AUTO_BLOCK,
+                         "user rejected (voice, top)", by="user")
+        remaining = len(svc.ambient.pending_decisions())
+        tail = f" {remaining} more waiting." if remaining else ""
+        return f"I didn't do it. The task can continue past this step.{tail}"
 
     @mcp.tool(
         description=(
             "Low-level: approve a specific decision by its exact request_id. Only use "
             "when you already have a request_id from a previous list. For normal voice "
-            "approval, use triage_next_decision instead (it needs no id)."
+            "approval, use approve_top (it needs no id)."
         )
     )
     async def approve(request_id: str, confirmed: bool = False) -> str:
@@ -218,7 +183,7 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         description=(
             "Low-level: reject a specific decision by its exact request_id. Only use "
             "when you already have a request_id. For normal voice rejection, use "
-            "triage_next_decision instead (it needs no id)."
+            "reject_top instead (it needs no id)."
         )
     )
     async def reject(request_id: str) -> str:

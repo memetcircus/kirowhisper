@@ -30,13 +30,21 @@ class Summarizer:
 
     # ── approval summary ──
 
-    def approval_summary(self, approval: Approval, risk: RiskAssessment) -> str:
-        """One spoken sentence describing a pending approval and its risk."""
-        # If the risk layer already produced a spoken summary, prefer it.
+    def approval_summary(
+        self, approval: Approval, risk: RiskAssessment, *, fast: bool = False
+    ) -> str:
+        """One spoken sentence describing a pending approval and its risk.
+
+        With ``fast=True`` the summary never calls Bedrock: it uses a pre-computed
+        spoken line if the risk layer produced one, otherwise the deterministic
+        fallback. This matters for latency-bound callers like the Alexa turn
+        (a tool that elicits must return well inside the few seconds Alexa allows).
+        """
+        # If the risk layer already produced a spoken summary, prefer it (instant).
         if risk.spoken_summary:
             return _clip(mask_secrets(risk.spoken_summary))
 
-        if self._client is not None:
+        if not fast and self._client is not None:
             spoken = self._try_bedrock(approval, risk)
             if spoken:
                 return _clip(mask_secrets(spoken))

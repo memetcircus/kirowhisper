@@ -8,10 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import mcp.types as mcp_types
-from mcp.client.session import ClientSession
-from mcp.shared.memory import create_client_server_memory_streams
-
 from kirowhisper.ambient import AmbientEngine
 from kirowhisper.audit import AuditLog
 from kirowhisper.config import AmbientConfig, BedrockConfig, Config
@@ -85,7 +81,8 @@ async def test_get_pending_decisions_lists_surfaced(tmp_path: Path):
     _surface(ambient, "r1", RiskLevel.HIGH)
     server = build_server(svc)
     out = await _call(server, "get_pending_decisions")
-    assert "1." in out
+    assert "First:" in out
+    assert "approve it" in out.lower() and "reject it" in out.lower()
 
 
 async def test_approve_high_risk_requires_confirmation(tmp_path: Path):
@@ -146,87 +143,33 @@ async def test_get_status_includes_ambient_and_sessions(tmp_path: Path):
     assert "session" in out.lower()
 
 
-# ---- Elicitation-driven triage flow (the Alexa+ bridge path) ----------------
-#
-# triage_next_decision asks the user a question mid-call (elicitation) and acts on
-# the answer. We test it end to end over an in-memory client/server connection,
-# with the client auto-answering the elicitation the way the bridge would.
-
-async def _run_triage_with_answers(server, answers):
-    """Call triage_next_decision over a real MCP connection, auto-answering each
-    elicitation with the next value from `answers` (a list of dicts, one per
-    elicit call). Returns the tool's final text output.
-    """
-    import anyio
-
-    replies = list(answers)
-
-    async def elicitation_callback(context, params):
-        content = replies.pop(0) if replies else None
-        if content is None:
-            return mcp_types.ElicitResult(action="decline")
-        return mcp_types.ElicitResult(action="accept", content=content)
-
-    async with create_client_server_memory_streams() as ((cr, cw), (sr, sw)):
-        async with anyio.create_task_group() as tg:
-
-            async def run_server():
-                low = server._lowlevel_server  # low-level server behind MCPServer
-                await low.run(sr, sw, low.create_initialization_options())
-
-            tg.start_soon(run_server)
-            async with ClientSession(
-                cr, cw, elicitation_callback=elicitation_callback
-            ) as session:
-                await session.initialize()
-                result = await session.call_tool("triage_next_decision", {})
-                tg.cancel_scope.cancel()
-
-    parts = [c.text for c in result.content if hasattr(c, "text")]
-    return " ".join(parts)
+# ---- approve_top / reject_top (the Alexa-reliable, no-elicitation path) ------
 
 
-async def test_triage_approve_low_risk(tmp_path: Path):
+async def test_approve_top_approves_highest_risk_first(tmp_path: Path):
     svc, gw, ambient = _services(tmp_path)
-    _surface(ambient, "t1", RiskLevel.LOW)
+    _surface(ambient, "low1", RiskLevel.LOW, slot="s1")
+    _surface(ambient, "high1", RiskLevel.HIGH, slot="s2")
     server = build_server(svc)
-    out = await _run_triage_with_answers(server, [{"decision": "approve"}])
+    out = await _call(server, "approve_top")
     assert "approved" in out.lower()
-    assert gw.approved == ["t1"]
+    assert gw.approved == ["high1"]              # HIGH went first
+    assert ambient.take_pending("high1") is None  # removed from queue
+    assert ambient.take_pending("low1") is not None  # low still waiting
 
 
-async def test_triage_reject(tmp_path: Path):
+async def test_reject_top_rejects_highest_risk_first(tmp_path: Path):
     svc, gw, ambient = _services(tmp_path)
-    _surface(ambient, "t2", RiskLevel.LOW)
+    _surface(ambient, "high2", RiskLevel.HIGH)
     server = build_server(svc)
-    out = await _run_triage_with_answers(server, [{"decision": "reject"}])
+    out = await _call(server, "reject_top")
     assert "didn't do it" in out.lower()
-    assert gw.rejected == ["t2"]
+    assert gw.rejected == ["high2"]
 
 
-async def test_triage_high_risk_needs_second_confirmation(tmp_path: Path):
-    svc, gw, ambient = _services(tmp_path)
-    _surface(ambient, "t3", RiskLevel.HIGH)
+async def test_approve_top_nothing_pending(tmp_path: Path):
+    svc, gw, _ = _services(tmp_path)
     server = build_server(svc)
-    # First answer approves; second (yes) confirms the high-risk action.
-    out = await _run_triage_with_answers(
-        server, [{"decision": "approve"}, {"yes": True}]
-    )
-    assert "approved" in out.lower()
-    assert gw.approved == ["t3"]
-
-
-async def test_triage_high_risk_declined_confirmation_does_not_approve(tmp_path: Path):
-    svc, gw, ambient = _services(tmp_path)
-    _surface(ambient, "t4", RiskLevel.HIGH)
-    server = build_server(svc)
-    await _run_triage_with_answers(server, [{"decision": "approve"}, {"yes": False}])
-    assert gw.approved == []               # not approved
-    assert ambient.take_pending("t4") is not None  # still queued
-
-
-async def test_triage_nothing_pending(tmp_path: Path):
-    svc, _, _ = _services(tmp_path)
-    server = build_server(svc)
-    out = await _run_triage_with_answers(server, [])
-    assert "nothing needs you" in out.lower()
+    out = await _call(server, "approve_top")
+    assert "nothing waiting" in out.lower()
+    assert gw.approved == []
