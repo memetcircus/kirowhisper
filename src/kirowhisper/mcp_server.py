@@ -45,6 +45,25 @@ class KiroWhisperServices:
     config: Config
 
 
+@dataclass
+class PendingDecisionsResult:
+    """Structured return for get_pending_decisions.
+
+    ``pending_count`` is a real numeric field, not folded into ``speech``.
+    Long-lived Alexa/AgentCore sessions keep up to 40 prior turns of chat
+    history in the model's context; a bare-string tool result invites the
+    model to paraphrase from that history instead of this turn's fresh
+    number (observed live: a stale "six decisions waiting" persisting after
+    the backend and this tool both already agreed on one). MCP marks
+    structured content as authoritative over prose (see the bridge's
+    tool-result reading rules), so a dedicated int field is the fix that
+    actually reaches the model, not just a comment.
+    """
+
+    speech: str
+    pending_count: int
+
+
 def build_server(services: KiroWhisperServices) -> MCPServer:
     """Wire the core services into an MCP server with voice-oriented tools."""
     mcp = MCPServer(
@@ -83,10 +102,10 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
             "voice assistant. After the user answers, call approve_top or reject_top."
         )
     )
-    async def get_pending_decisions() -> str:
+    async def get_pending_decisions() -> PendingDecisionsResult:
         pend = svc.ambient.pending_decisions()
         if not pend:
-            return "Nothing needs you right now."
+            return PendingDecisionsResult(speech="Nothing needs you right now.", pending_count=0)
         # HIGH first, then the rest; voice-limit to 3 (NFR-3).
         pend.sort(key=lambda p: 0 if p.risk.level == RiskLevel.HIGH else 1)
         total = len(pend)
@@ -99,7 +118,11 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         # session closes and the user's next words (e.g. "reject it") go to Alexa
         # itself instead of back to this skill.
         prompt = " Should I approve it, or reject it?"
-        return f"{head}First: {summary}{prompt}"
+        speech = f"{head}First: {summary}{prompt}"
+        # pending_count is real structured content (see PendingDecisionsResult):
+        # this turn's true, current count, so the model has no reason to fall
+        # back on a number it said in an earlier turn of a long-lived session.
+        return PendingDecisionsResult(speech=speech, pending_count=total)
 
     @mcp.tool(
         description=(
