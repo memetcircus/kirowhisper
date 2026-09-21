@@ -94,7 +94,11 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         # fast=True: Alexa-turn latency budget; use pre-computed/deterministic text.
         summary = svc.summarizer.approval_summary(top.approval, top.risk, fast=True)
         head = f"{total} decisions are waiting. " if total > 1 else ""
-        prompt = " Say 'approve it' to allow this, or 'reject it' to skip it."
+        # End with a literal question mark: the Alexa bridge keeps the microphone open
+        # only when the spoken reply ends in '?' (endsWithQuestion). Without it the
+        # session closes and the user's next words (e.g. "reject it") go to Alexa
+        # itself instead of back to this skill.
+        prompt = " Should I approve it, or reject it?"
         return f"{head}First: {summary}{prompt}"
 
     @mcp.tool(
