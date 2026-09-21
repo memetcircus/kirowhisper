@@ -95,6 +95,18 @@ class AmbientEngine:
     async def poll_once(self) -> list[Decision]:
         """Fetch pending approvals, classify + route the new ones. Returns decisions made."""
         approvals = await self._gw.list_pending_approvals()
+        live_ids = {a.request_id for a in approvals}
+
+        # Drop stale entries: if a surfaced decision's underlying Crew slot/approval
+        # is gone (deleted, expired, or resolved outside our own approve/reject
+        # calls), the Gateway simply stops listing it. Without this, _pending would
+        # accumulate ghost entries forever and get_pending_decisions would report a
+        # growing, wrong count (observed live: "6 decisions waiting" with 1 real).
+        stale = [rid for rid in self._pending if rid not in live_ids]
+        for rid in stale:
+            self._pending.pop(rid, None)
+            self._seen.discard(rid)  # allow it to be re-surfaced if it reappears
+
         decisions: list[Decision] = []
         for approval in approvals:
             if approval.request_id in self._seen:

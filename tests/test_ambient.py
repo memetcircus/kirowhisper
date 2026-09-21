@@ -173,6 +173,60 @@ async def test_resolve_failure_drops_back_to_pending(tmp_path: Path):
     assert len(eng.pending_decisions()) == 1
 
 
+# ── stale/ghost pending cleanup ──
+
+
+async def test_deleted_approval_is_dropped_from_pending(tmp_path: Path):
+    """A surfaced decision whose Crew slot/approval disappears (deleted, expired,
+    resolved elsewhere) must not linger in _pending forever. Reproduces a live bug:
+    get_pending_decisions reported a growing count (up to '6 decisions waiting')
+    for ghost entries whose underlying approval no longer existed on the Gateway.
+    """
+    approvals = [_ap("ghost1")]
+    gw = FakeGateway(approvals)
+    eng = _engine(gw, FixedClassifier(RiskLevel.HIGH), tmp_path)
+    await eng.poll_once()
+    assert len(eng.pending_decisions()) == 1
+
+    # The underlying approval vanishes from the Gateway (slot deleted, expired, ...).
+    approvals.clear()
+    await eng.poll_once()
+    assert eng.pending_decisions() == []  # no longer reported
+
+
+async def test_reappearing_approval_after_cleanup_is_resurfaced(tmp_path: Path):
+    """If a stale id is cleaned up and the same id later reappears (edge case), it
+    must be treated as new again rather than silently ignored via _seen.
+    """
+    approvals = [_ap("flappy")]
+    gw = FakeGateway(approvals)
+    eng = _engine(gw, FixedClassifier(RiskLevel.HIGH), tmp_path)
+    await eng.poll_once()
+    assert len(eng.pending_decisions()) == 1
+
+    approvals.clear()
+    await eng.poll_once()
+    assert eng.pending_decisions() == []
+
+    approvals.append(_ap("flappy"))
+    await eng.poll_once()
+    assert len(eng.pending_decisions()) == 1  # surfaced again, not skipped as "seen"
+
+
+async def test_unrelated_pending_survives_cleanup(tmp_path: Path):
+    """Cleanup must only drop ids that vanished, not everything."""
+    approvals = [_ap("keep"), _ap("gone")]
+    gw = FakeGateway(approvals)
+    eng = _engine(gw, FixedClassifier(RiskLevel.HIGH), tmp_path)
+    await eng.poll_once()
+    assert len(eng.pending_decisions()) == 2
+
+    approvals[:] = [a for a in approvals if a.request_id != "gone"]
+    await eng.poll_once()
+    remaining = {p.approval.request_id for p in eng.pending_decisions()}
+    assert remaining == {"keep"}
+
+
 # ── snapshot ──
 
 async def test_snapshot_counts(tmp_path: Path):
