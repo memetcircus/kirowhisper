@@ -157,6 +157,20 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
 - **Suggestion:** Document that idle SSE streams behind tunnels expire sessions, and
   recommend stateless mode for stateless tool surfaces.
 
+### Design note — slot deletion is deliberately kept off the voice/MCP surface
+- **Context:** Our test scripts create throwaway chat slots, which pile up in Crew's
+  UI. It's tempting to add a `delete_slot` to the Gateway client (or an MCP tool) to
+  clean them up.
+- **Decision:** We don't. Deleting a slot is destructive and irreversible — it discards
+  the slot's whole conversation history and any task context. On a voice surface, one
+  misheard word could wipe real work, which is the exact opposite of KiroWhisper's
+  promise (protect the risky, fail safe). Note also that an **expired approval is not
+  the same as a deletable slot**: deny-on-silence already resolved the *decision*
+  safely, but the slot still holds its history.
+- **Resolution:** Slot deletion exists only as an explicit developer tool
+  (`scripts/cleanup_test_slots.py`), guarded to touch only known test-prefixed slots,
+  with a `--dry-run`. It is never reachable from the product.
+
 ### F12 — High-risk voice approval had no second confirmation
 - **Task:** Approve the top pending decision by voice for an eyes-free user.
 - **Steps:** The Alexa-reliable path is a two-call flow: `get_pending_decisions`, then
