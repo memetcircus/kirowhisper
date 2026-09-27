@@ -31,9 +31,11 @@ from kirowhisper.gateway_client import GatewayClient
 # (label, task text). One tool action each so each becomes a single approval.
 DEMO_TASKS: list[tuple[str, str]] = [
     ("low-create-1",
-     "Use your file-write tool to create a file named notes_a.txt containing the text 'hello a'. Do only this one step."),
+     "Use your file-write tool to create a file named notes_a.txt containing the text "
+     "'hello a'. Do only this one step."),
     ("low-create-2",
-     "Use your file-write tool to create a file named notes_b.txt containing the text 'hello b'. Do only this one step."),
+     "Use your file-write tool to create a file named notes_b.txt containing the text "
+     "'hello b'. Do only this one step."),
     ("high-delete",
      "Use your file tools to delete the file docs/rules.txt. Do only this one step."),
     ("high-shell",
@@ -76,7 +78,7 @@ async def main() -> None:
             await asyncio.sleep(1.0)  # small stagger so Crew accepts each cleanly
 
         print("\nAll tasks sent. Waiting for approvals to surface...")
-        for i in range(12):
+        for _ in range(12):
             await asyncio.sleep(4)
             n = await show_pending(gw)
             if n >= 3:
