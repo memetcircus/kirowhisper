@@ -120,11 +120,68 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
 - **Suggestion:** A built-in "suppress self-audio while speaking" (echo/barge-in
   handling) would make hands-free voice UIs far easier to build correctly.
 
+### F10 — Stale tool count leaked from a long-lived voice session
+- **Task:** Report the number of pending decisions by voice ("N decisions are waiting").
+- **Steps:** Ran the real Alexa+ path through the MCP bridge, whose agent keeps one
+  long-lived conversation per user. Asked "what needs my decision" repeatedly as the
+  real count changed.
+- **Expected:** The spoken count always matches the current pending count.
+- **Actual:** The number drifted (e.g. a stale "six decisions waiting" when only one
+  was real), even after the backend and the tool both agreed on the true count. The
+  agent was paraphrasing a number it had *said in an earlier turn* rather than reading
+  this turn's fresh tool result — the count lived inside a prose sentence, which the
+  model treats as reworkable text.
+- **Severity:** Medium (wrong, alarming numbers erode trust in an oversight tool).
+- **Workaround:** Return the count as a real structured field (`pending_count` in
+  `structuredContent`), which the bridge treats as authoritative over prose, plus a
+  prompt rule that a fresh tool number always overrides anything said earlier.
+- **Suggestion:** For voice, keep authoritative values (counts, ids, amounts) in
+  structured fields, never only in the spoken sentence.
+
+### F11 — MCP session died between turns on a tunnelled SSE stream
+- **Task:** Serve the MCP server to a long-lived agent (Alexa+ via the bridge) through
+  a public tunnel, with minutes of idle time between voice turns.
+- **Steps:** Default Streamable HTTP (SSE mode) behind a cloudflared quick tunnel; the
+  bridge holds one MCP client per user across turns.
+- **Expected:** A tool call after an idle gap just works.
+- **Actual:** The next call failed with JSON-RPC `-32600 "Session not found"`. The
+  tunnel drops idle SSE streams, so the server-side session expired, but the client
+  still held the old session id and the transport's `onclose` never fired (a non-2xx
+  POST doesn't close the transport), so it never reconnected on its own.
+- **Severity:** High (broke the first voice turn after any pause).
+- **Workaround:** Two layers. (1) Run the MCP server **stateless** (`stateless_http`,
+  `json_response`) — with no server-side session, "Session not found" is impossible.
+  Elicitation was already removed from the voice flow, so the SSE back-channel wasn't
+  needed. (2) In the bridge, detect exactly this error, drop the dead client, and retry
+  the call once on a fresh connection.
+- **Suggestion:** Document that idle SSE streams behind tunnels expire sessions, and
+  recommend stateless mode for stateless tool surfaces.
+
+### F12 — High-risk voice approval had no second confirmation
+- **Task:** Approve the top pending decision by voice for an eyes-free user.
+- **Steps:** The Alexa-reliable path is a two-call flow: `get_pending_decisions`, then
+  `approve_top`/`reject_top` (no request id, no elicitation round trip). A single "yes"
+  reached `approve_top`.
+- **Expected:** A destructive, irreversible step (a shell `rm`) needs an explicit second
+  confirmation — the product's whole promise is protecting the risky ones.
+- **Actual:** `approve_top` resolved a HIGH-risk decision on the first "yes" with no
+  re-confirmation (the low-level `approve` had a `confirmed` flag, but the voice path
+  bypassed it). Separately, resolving an approval that had already expired still returned
+  `{"ok": true}`, so the tool falsely reported success.
+- **Severity:** High (a safety guarantee, silently missing on the primary voice path).
+- **Workaround:** `approve_top` now arms a short-lived, request-id-bound confirmation:
+  the first call on a HIGH-risk decision only asks "are you sure?"; a second call within
+  the window applies it. And resolve verifies the exact permission's real `meta.resolved`
+  state instead of trusting `{"ok": true}`, raising a distinct "not pending" error on
+  expiry so nothing is reported as approved when it wasn't.
+- **Suggestion:** Bake a "requires confirmation" attribute into the approval model so
+  every client enforces it consistently.
+
 ---
 
 ## Severity tally
-- High: F1, F2, F8
-- Medium: F3, F4, F5, F7, F9
+- High: F1, F2, F8, F11, F12
+- Medium: F3, F4, F5, F7, F9, F10
 - Low: F6
 
 Most frictions were about **discovery** (how to talk to the Gateway, which action
@@ -132,4 +189,8 @@ string, where the pending approval lives) rather than capability gaps — the
 capabilities were all there. Better client docs would remove the majority of these.
 The browser voice frictions (F8, F9) were the exception: real behavioral gaps in the
 Web Speech API that only surface once you wire up genuine hands-free interaction, and
-they pushed us to a more reliable host-TTS architecture.
+they pushed us to a more reliable host-TTS architecture. The later frictions (F10–F12)
+came from the real Alexa+ device path via the MCP bridge: a long-lived, tunnelled agent
+session surfaces stale-value, dead-session, and safety-confirmation issues that never
+appear in short-lived local calls, and each pushed a concrete fix (structured values,
+stateless HTTP, and a real second confirmation on the voice path).

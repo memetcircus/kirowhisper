@@ -15,11 +15,16 @@ the decisions that genuinely need you.**
 Built for the **Amazon "Build, Ship, Shape" Developer Hackathon** — Alexa+ track
 (MCP), with the **AWS Builder** mini-challenge (Amazon Bedrock).
 
-> **Honest disclosure:** The Alexa+ MCP add-on toolkit is not yet publicly
-> available, so the Alexa+ interaction layer here is a **rules-compliant
-> simulation** (a web UI using the browser's own speech-to-text and text-to-speech,
-> driven by your own voice). Everything behind it is real: a genuine MCP server,
-> the real Kiro Crew Gateway, and Amazon Bedrock. Only the "Alexa+" surface is simulated.
+> **Honest disclosure:** The official Alexa+ MCP add-on toolkit is not yet publicly
+> available, so the primary demo surface is a **rules-compliant simulation** (a web UI
+> using the browser's own speech-to-text and text-to-speech, driven by your own voice).
+> Everything behind it is real: a genuine MCP server, the real Kiro Crew Gateway, and
+> Amazon Bedrock. We *additionally* ran the full flow on a **real Echo device and the
+> Alexa developer console** via the open-source
+> [`alexa-skill-mcp-bridge`](https://github.com/KayLerch/alexa-skill-mcp-bridge)
+> (an Alexa Skill → Amazon Bedrock AgentCore agent → our MCP server), where
+> decision-read, safe-reject, and a high-risk two-step approve all worked by voice
+> against the live backend.
 
 ---
 
@@ -97,11 +102,18 @@ python -m kirowhisper voice
 **Run as an MCP server** (for Alexa+/MCP clients, Streamable HTTP)
 ```bash
 python -m kirowhisper
-# serves the MCP tools over Streamable HTTP
+# serves the MCP tools over stateless Streamable HTTP on 127.0.0.1:8000/mcp
 ```
 
-**MCP tools exposed:** `get_status`, `get_pending_decisions`, `approve`, `reject`,
-`trust_session`, `summarize`.
+**MCP tools exposed:** `get_status`, `get_pending_decisions`, `approve_top`,
+`reject_top`, `approve`, `reject`, `trust_session`, `summarize`.
+
+The voice path is a two-call flow that's robust on assistants with no elicitation
+back-channel: `get_pending_decisions` speaks the highest-risk decision first, then
+`approve_top` / `reject_top` acts on it with no request id. **High-risk decisions
+require a second confirmation** — the first `approve_top` only asks "are you sure?",
+and a second call applies it. The server runs **stateless** (each request stands
+alone), so a long-lived client behind a tunnel never hits a dead session.
 
 **Configuration** (all optional, via environment):
 `KIROWHISPER_GATEWAY_URL`, `KIROWHISPER_TOKEN_CMD`, `AWS_REGION`,

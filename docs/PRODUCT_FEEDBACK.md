@@ -83,11 +83,63 @@ tutorials fail with an import error. The error message did point to a migration
 guide, which helped — but pinning guidance ("use `mcp<2` for v1 code") in the primary
 docs would reduce surprise.
 
+- **SSE vs stateless is a real deployment decision, not a detail.** The default
+  Streamable HTTP mode keeps a server-side session with an SSE back-channel. Behind a
+  tunnel with a long-lived client and minutes of idle time between calls, that session
+  expires and the next call fails with `-32600 "Session not found"`. Since our voice
+  flow makes no server→client requests (no elicitation), `stateless_http=True` with
+  `json_response=True` removed the whole failure class — every call stands alone. A
+  short "pick stateless unless you elicit" note in the docs would help.
+- **Keep authoritative values in `structuredContent`, not just text.** A tool that
+  returned its count inside a prose sentence let a long-lived agent paraphrase a stale
+  number from an earlier turn. Moving the count into a real structured field (which the
+  client treats as authoritative) fixed it. This is easy to do once you know the
+  unstructured text and `structuredContent` are both sent and the client prefers the
+  latter.
+
 **Onboarding.** Fast, after resolving the 1.x-vs-2.x confusion. Introspecting the
 installed package (`inspect.signature`) was the quickest way to get the current API.
 
 **Would we build with it again?** Yes. Streamable HTTP support out of the box is
-exactly what the Alexa+ track needs.
+exactly what the Alexa+ track needs — and stateless mode made it robust behind a tunnel.
+
+---
+
+## Alexa+ via the MCP bridge (Bedrock AgentCore Runtime)
+
+**What we used it for.** Driving the real Alexa+ / Echo path for KiroWhisper: an Alexa
+Skill Lambda forwards each turn to an agent on Bedrock AgentCore Runtime, which calls
+our MCP server's tools and speaks the results. We reached it through Kay Lerch's
+open-source `alexa-skill-mcp-bridge` and exercised it end-to-end in the Alexa developer
+console simulator against a real deployed runtime.
+
+**What worked well.** The bridge is a faithful stand-in for a future Alexa+ MCP add-on:
+tools are discovered from the live server, and the two-call voice flow
+(`get_pending_decisions` → `approve_top`/`reject_top`) rides straight through to real
+Crew approvals. Once wired up, decision-read, safe-reject, and a high-risk
+two-step approve all worked by voice against the real backend.
+
+**What needs work (platform behaviors we had to design around).**
+- **One long-lived agent session per user.** AgentCore keys the session by a hash of
+  the Alexa user id, so the same warm agent (with its rolling conversation history)
+  serves every turn. That is what let a stale spoken count survive across turns — the
+  fix belonged on our side (structured values), but the behavior is worth knowing.
+- **Alexa+ sometimes answers instead of the skill.** Certain phrasings ("what needs my
+  decision") were handled by Alexa's own general assistant and never reached our Lambda
+  (confirmed by the absence of any Lambda invocation). Using the explicit
+  "ask &lt;skill&gt; …" launch form routed reliably to the skill.
+- **Deny-on-silence is unforgiving for a slow voice demo.** Crew expires an unresolved
+  approval in ~60–75s (see Friction Log F6). Opening the skill and speaking often
+  outran that window, so we ran a tiny helper that always keeps one fresh throwaway
+  approval waiting during testing.
+
+**Onboarding.** The bridge's own docs and CLI (`npm run chat --remote`) made it possible
+to reproduce the deployed path locally, which was essential — the fastest way to tell
+"the model hallucinated" from "the tool returned wrong data" was comparing a direct MCP
+call with a bridge turn.
+
+**Would we build with it again?** Yes. It's the closest thing to a real Alexa+ MCP
+surface available today, and it proved the whole KiroWhisper concept on a physical Echo.
 
 ---
 
@@ -138,5 +190,6 @@ to a dedicated STT/TTS (or Crew's built-in Piper/Transcribe voice).
 |---|---|---|
 | Kiro Crew Gateway | ✅ | Great primitive; document the client auth shape. |
 | Amazon Bedrock (Converse) | ✅ | Model-agnostic Converse made "rules + model" cheap and clean. |
-| MCP Python SDK | ✅ | Streamable HTTP is easy once you're past the 1.x→2.x rename. |
+| MCP Python SDK | ✅ | Streamable HTTP is easy; pick stateless mode behind a tunnel. |
+| Alexa+ MCP bridge (AgentCore) | ✅ | Closest thing to real Alexa+ MCP; mind the long-lived session. |
 | Web Speech API | ✅ (demo) | Honest, zero-dependency voice for the simulation. |
