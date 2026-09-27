@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KiroWhisper — voice oversight (simulated Alexa+)</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.5rem;
+    background: #0b0d12; color: #e8eaf0;
+    font: 16px/1.5 -apple-system, system-ui, sans-serif;
+  }
+  .badge { position: fixed; top: 12px; left: 12px; font-size: 12px; color: #8a90a0;
+    border: 1px solid #2a2f3a; padding: 4px 8px; border-radius: 6px; }
+  h1 { font-weight: 600; font-size: 1.4rem; margin: 0; }
+  .sub { color: #8a90a0; margin-top: -0.5rem; }
+  /* light ring */
+  .ring {
+    width: 160px; height: 160px; border-radius: 50%;
+    background: radial-gradient(circle at 50% 50%, #12151c 55%, transparent 56%);
+    border: 6px solid #2a2f3a; transition: border-color .3s, box-shadow .3s;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .ring.idle { border-color: #3a4152; }
+  .ring.listening { border-color: #4da3ff; box-shadow: 0 0 32px #4da3ff66; }
+  .ring.speaking { border-color: #4dffa3; box-shadow: 0 0 32px #4dffa366; }
+  .ring.alert { border-color: #ffcc4d; box-shadow: 0 0 40px #ffcc4d88; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.04)} }
+  .mic { font-size: 2.5rem; }
+  .transcript { min-height: 1.5rem; color: #b7bccb; font-style: italic; }
+  .say { max-width: 640px; text-align: center; font-size: 1.15rem; padding: 0 1rem; }
+  .pending { max-width: 640px; width: 90%; }
+  .pending h2 { font-size: .85rem; color: #8a90a0; text-transform: uppercase;
+    letter-spacing: .05em; }
+  .item { border: 1px solid #2a2f3a; border-radius: 8px; padding: .6rem .8rem;
+    margin: .4rem 0; display: flex; gap: .6rem; align-items: center; }
+  .risk { font-size: .7rem; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
+  .risk.high { background: #4a1f1f; color: #ff9d9d; }
+  .risk.low { background: #1f4a2f; color: #9dffb8; }
+  .risk.unknown { background: #4a421f; color: #ffe89d; }
+  .hint { color: #6a7080; font-size: .85rem; }
+  button.cmd { background: #1a1f2a; color: #e8eaf0; border: 1px solid #3a4152;
+    border-radius: 6px; padding: .3rem .6rem; cursor: pointer; font-size: .8rem; }
+</style>
+</head>
+<body>
+  <div class="badge">Simulated Alexa+ · real MCP + Kiro Crew backend</div>
+  <h1>KiroWhisper</h1>
+  <div class="sub">Tap the ring ONCE to start hands-free listening, then just talk:
+    “what's up?” … “approve” … “no”. Tap again to stop.</div>
+
+  <div id="ring" class="ring idle" title="Tap to talk"><span class="mic">🎙️</span></div>
+  <div id="transcript" class="transcript"></div>
+  <div id="say" class="say"></div>
+
+  <div class="pending">
+    <h2>Waiting for you</h2>
+    <div id="pendingList"></div>
+    <div class="hint">Say “approve” / “yes” to approve the top item, “no” / “reject” to skip.
+      High-risk items ask you to confirm.</div>
+  </div>
+
+<script>
+// ==== HARD DISABLE browser text-to-speech ====================================
+// The demo speaks ONLY through the server (macOS `say`). Neutralize the browser
+// speech API entirely so nothing — not our code, not a stray call — can ever
+// produce a second voice, regardless of how it's invoked.
+try {
+  if ('speechSynthesis' in window) {
+    speechSynthesis.cancel();
+    speechSynthesis.speak = function () {};   // no-op: browser can never speak
+  }
+  if ('SpeechSynthesisUtterance' in window) {
+    // Keep the constructor valid but harmless.
+    window.SpeechSynthesisUtterance = function () { return {}; };
+  }
+} catch (e) {}
+// ============================================================================
+
+const ring = document.getElementById('ring');
+const transcriptEl = document.getElementById('transcript');
+const sayEl = document.getElementById('say');
+const pendingList = document.getElementById('pendingList');
+
+let topRequestId = null;      // the request_id of the first pending item
+let awaitingConfirm = null;   // request_id awaiting high-risk confirmation
+
+function setRing(state) { ring.className = 'ring ' + state; }
+
+// ---- Text to speech (system's voice) ----
+function speak(text) {
+  if (!text) return;
+  sayEl.textContent = text;
+  // Pause listening while we speak so the system doesn't hear its own voice.
+  speaking = true;
+  try { if (recog) recog.stop(); } catch (e) {}
+  setRing('speaking');
+
+  const resume = () => {
+    // Wait a beat AFTER the voice finishes before re-opening the mic, so the tail
+    // of our own speech doesn't get picked up as a new command (echo loop).
+    setTimeout(() => {
+      speaking = false;
+      if (listening) { setRing('listening'); safeStart(); }
+      else { setRing('idle'); }
+    }, 700);
+  };
+
+  // Hard-silence ANY browser speech, every time. The server (macOS `say`) is the
+  // one and only voice — browser speechSynthesis is never used for the demo.
+  killBrowserSpeech();
+
+  // Server-side TTS is the ONLY voice. If the server has no engine, we just
+  // show the text (no browser voice) so two voices can never overlap.
+  fetch('/api/speak', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ text }) })
+    .then(r => r.json())
+    .then(() => resume())
+    .catch(() => resume());
+}
+
+// Cancel and disable browser TTS so it can never speak alongside the server.
+function killBrowserSpeech() {
+  try {
+    if ('speechSynthesis' in window) {
+      speechSynthesis.cancel();
+      speechSynthesis.cancel();  // some Chrome builds need a second cancel
+    }
+  } catch (e) {}
+}
+
+// ---- Backend calls ----
+async function getJSON(url) { const r = await fetch(url); return r.json(); }
+async function postJSON(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body || {}) });
+  return r.json();
+}
+
+async function refreshPending() {
+  const data = await getJSON('/api/pending');
+  const items = data.pending || [];
+  topRequestId = items.length ? items[0].request_id : null;
+  pendingList.innerHTML = '';
+  if (!items.length) {
+    pendingList.innerHTML = '<div class="hint">Nothing needs you right now.</div>';
+    return;
+  }
+  for (const it of items) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = `<span class="risk ${it.risk}">${it.risk}</span>
+      <span style="flex:1">${it.spoken}</span>`;
+    const ok = document.createElement('button'); ok.className='cmd'; ok.textContent='approve';
+    ok.onclick = () => doApprove(it.request_id);
+    const no = document.createElement('button'); no.className='cmd'; no.textContent='reject';
+    no.onclick = () => doReject(it.request_id);
+    div.append(ok, no);
+    pendingList.appendChild(div);
+  }
+}
+
+async function doApprove(rid, confirmed=false) {
+  const res = await postJSON('/api/approve', { request_id: rid, confirmed });
+  if (res.needs_confirmation) { awaitingConfirm = rid; }
+  else { awaitingConfirm = null; }
+  speak(res.spoken);
+  refreshPending();
+}
+async function doReject(rid) {
+  const res = await postJSON('/api/reject', { request_id: rid });
+  awaitingConfirm = null;
+  speak(res.spoken);
+  refreshPending();
+}
+async function askStatus() { const res = await getJSON('/api/status'); speak(res.spoken); }
+async function doTrust() { const res = await postJSON('/api/trust', {}); speak(res.spoken); }
+
+// ---- Intent handling from voice ----
+let lastHandledText = '';
+let lastHandledAt = 0;
+
+function handle(text) {
+  // Never act on anything captured while our own voice is playing (echo guard).
+  if (speaking) return;
+  // Don't process the exact same phrase twice in a row within 2s (dedup).
+  const now = Date.now();
+  if (text === lastHandledText && now - lastHandledAt < 2000) return;
+  lastHandledText = text;
+  lastHandledAt = now;
+
+  const t = text.toLowerCase().trim();
+  transcriptEl.textContent = '“' + text + '”';
+
+  if (/(status|what.?s up|what is up|whatsapp|ne durum|report|standup)/.test(t)) return askStatus();
+  if (/\b(trust|always approve|hep onayla)\b/.test(t)) return doTrust();
+
+  // approval intents — require whole-word matches so stray audio can't trigger them
+  if (/\b(approve|approved|yes|yeah|confirm|do it|go ahead)\b/.test(t)) {
+    const rid = awaitingConfirm || topRequestId;
+    if (!rid) return speak("There's nothing waiting for you.");
+    return doApprove(rid, /* confirmed */ awaitingConfirm ? true : false);
+  }
+  if (/\b(reject|rejected|no|nope|skip|deny)\b/.test(t)) {
+    const rid = topRequestId;
+    if (!rid) return;  // silently ignore — do NOT speak, or we loop on our own voice
+    return doReject(rid);
+  }
+  // Unknown phrase: show it on screen but stay silent to avoid an echo loop.
+  transcriptEl.textContent = '“' + text + '” — say “what\u2019s up”, “approve”, or “reject”.';
+}
+
+// ---- Speech recognition (user's own voice) ----
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null;
+let listening = false;   // hands-free session on/off
+let speaking = false;    // true while TTS plays (so we don't hear ourselves)
+
+let recogRunning = false;   // true between onstart and onend, so we never double-start
+
+function safeStart() {
+  if (!recog || recogRunning || speaking || !listening) return;
+  try { recog.start(); } catch (e) { /* already started */ }
+}
+
+if (SR) {
+  recog = new SR();
+  recog.lang = 'en-US';
+  recog.interimResults = true;   // stream partials so we can show + wait for the final
+  recog.maxAlternatives = 1;
+  recog.continuous = true;       // keep listening across utterances
+
+  recog.onstart = () => { recogRunning = true; if (!speaking) setRing('listening'); };
+  recog.onerror = (e) => { /* no-speech/aborted are normal; onend will restart */ };
+  recog.onend = () => {
+    recogRunning = false;
+    // Auto-restart while the hands-free session is on (unless we're speaking).
+    if (listening && !speaking) safeStart();
+  };
+  recog.onresult = (e) => {
+    if (speaking) return;  // ignore anything captured while our own voice plays
+    const r = e.results[e.results.length - 1];
+    const text = r[0].transcript.trim();
+    if (!text) return;
+    // Always show what we're hearing, even interim, so the user sees progress.
+    transcriptEl.textContent = '“' + text + '”';
+    // Only ACT on a final result, so we don't fire on a half-heard "app"/"re".
+    if (r.isFinal) handle(text);
+  };
+}
+
+function startListening() {
+  killBrowserSpeech();  // ensure the browser never speaks; server `say` is the only voice
+  if (!recog) { speak("Speech recognition isn't available. Use Chrome, or the buttons."); return; }
+  listening = true;
+  // Speak the confirmation first; resume() will open the mic once the voice ends,
+  // so we never start recognition and then immediately stop it for the greeting.
+  speak("Listening.");
+}
+function stopListening() {
+  listening = false;
+  try { recog.abort(); } catch (e) {}
+  recogRunning = false;
+  setRing('idle');
+}
+ring.onclick = () => { listening ? stopListening() : startListening(); };
+
+// ---- Proactive surfaces via SSE (the colleague calls you) ----
+try {
+  const es = new EventSource('/events');
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    setRing('alert');
+    speak("KiroWhisper: " + data.spoken);
+    refreshPending();
+  };
+} catch (e) { /* SSE optional */ }
+
+refreshPending();
+setInterval(refreshPending, 5000);
+</script>
+</body>
+</html>

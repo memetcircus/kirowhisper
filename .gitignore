@@ -1,0 +1,49 @@
+# === Hassas / gizli notlar (ASLA push edilmez) ===
+docs/PRIVATE_NOTES.md
+PRIVATE_NOTES.md
+**/PRIVATE_*.md
+
+# === Spike / experiment env (venv, temporary test files) ===
+spike/.venv/
+spike/kirocrew_client/
+spike/__pycache__/
+**/__pycache__/
+
+# === Secrets / credentials ===
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials
+.aws/
+**/.app_secret
+*secret*
+*credentials*
+
+# === Node ===
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# === Python ===
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# === Build / deploy ===
+dist/
+build/
+cdk.out/
+.cdk.staging/
+
+# === OS / editor ===
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
