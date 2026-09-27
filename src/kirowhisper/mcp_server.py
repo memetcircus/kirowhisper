@@ -46,25 +46,6 @@ class KiroWhisperServices:
     config: Config
 
 
-@dataclass
-class PendingDecisionsResult:
-    """Structured return for get_pending_decisions.
-
-    ``pending_count`` is a real numeric field, not folded into ``speech``.
-    Long-lived Alexa/AgentCore sessions keep up to 40 prior turns of chat
-    history in the model's context; a bare-string tool result invites the
-    model to paraphrase from that history instead of this turn's fresh
-    number (observed live: a stale "six decisions waiting" persisting after
-    the backend and this tool both already agreed on one). MCP marks
-    structured content as authoritative over prose (see the bridge's
-    tool-result reading rules), so a dedicated int field is the fix that
-    actually reaches the model, not just a comment.
-    """
-
-    speech: str
-    pending_count: int
-
-
 def build_server(services: KiroWhisperServices) -> MCPServer:
     """Wire the core services into an MCP server with voice-oriented tools."""
     mcp = MCPServer(
@@ -77,7 +58,13 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         ),
     )
     svc = services
-    high_risk_confirmations: dict[str, float] = {}
+    # request_id -> deadline for an *armed* approval. approve_top never applies a
+    # decision on its first call: it arms a confirmation and asks the user to say
+    # yes/approve again. Only a second approve_top within the TTL actually approves.
+    # This makes "does an ambiguous 'yes' apply a real decision?" a NO at the code
+    # level, independent of how the voice model interprets the word — the safety is
+    # deterministic, not prompt-dependent. Applies to EVERY decision, not just HIGH.
+    pending_confirmations: dict[str, float] = {}
     confirmation_ttl_s = 30.0
 
     def prune_confirmations(live_ids: set[str]) -> None:
@@ -85,11 +72,11 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         now = time.monotonic()
         stale = [
             rid
-            for rid, deadline in high_risk_confirmations.items()
+            for rid, deadline in pending_confirmations.items()
             if rid not in live_ids or deadline <= now
         ]
         for rid in stale:
-            high_risk_confirmations.pop(rid, None)
+            pending_confirmations.pop(rid, None)
 
     @mcp.tool(description="Spoken overall status: what Crew is doing and what Ambient handled.")
     async def get_status() -> str:
@@ -112,14 +99,27 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
             "THE tool to call for 'what needs my decision', 'what's waiting', 'anything "
             "for me', or to review/hear pending decisions. Speaks the most important "
             "decision first (highest risk) and tells the user to say 'approve it' or "
-            "'reject it'. One quick call, no follow-up question — always safe on a "
-            "voice assistant. After the user answers, call approve_top or reject_top."
-        )
+            "'reject it'. Read-only and always safe: it never approves or rejects "
+            "anything. After speaking the decision, STOP and wait. Only if the user "
+            "then EXPLICITLY says approve or reject should you call approve_top or "
+            "reject_top; otherwise just answer and do nothing else."
+        ),
+        # structured_output=False: with the default auto-detect, a `-> str` return
+        # still makes the SDK advertise an output schema ({"result": string}) AND wrap
+        # the reply in structuredContent. The Alexa bridge then sends the model only
+        # that JSON block and drops the spoken text, so the model treated our sentence
+        # as data and skipped reading the decision aloud. It also broke on a warm
+        # session that had cached an older output schema (-32602). Forcing NO structured
+        # output makes this tool return a single plain-text block: words to speak, no
+        # schema to drift, so the decision is actually read to an eyes-free user.
+        structured_output=False,
     )
-    async def get_pending_decisions() -> PendingDecisionsResult:
+    async def get_pending_decisions() -> str:
+        # (The stale-count risk that a structured `pending_count` once guarded against
+        # is already handled at the source by AmbientEngine's ghost-entry cleanup.)
         pend = svc.ambient.pending_decisions()
         if not pend:
-            return PendingDecisionsResult(speech="Nothing needs you right now.", pending_count=0)
+            return "Nothing needs you right now."
         # HIGH first, then the rest; voice-limit to 3 (NFR-3).
         pend.sort(key=lambda p: 0 if p.risk.level == RiskLevel.HIGH else 1)
         total = len(pend)
@@ -127,24 +127,25 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         # fast=True: Alexa-turn latency budget; use pre-computed/deterministic text.
         summary = svc.summarizer.approval_summary(top.approval, top.risk, fast=True)
         head = f"{total} decisions are waiting. " if total > 1 else ""
-        # End with a literal question mark: the Alexa bridge keeps the microphone open
-        # only when the spoken reply ends in '?' (endsWithQuestion). Without it the
-        # session closes and the user's next words (e.g. "reject it") go to Alexa
-        # itself instead of back to this skill.
-        prompt = " Should I approve it, or reject it?"
-        speech = f"{head}First: {summary}{prompt}"
-        # pending_count is real structured content (see PendingDecisionsResult):
-        # this turn's true, current count, so the model has no reason to fall
-        # back on a number it said in an earlier turn of a long-lived session.
-        return PendingDecisionsResult(speech=speech, pending_count=total)
+        # Read the decision FIRST (what it is + why it may matter), THEN a neutral
+        # question. Ends with "?" so the Alexa bridge keeps the mic open
+        # (endsWithQuestion); neutral wording ("what would you like to do?") so a
+        # stray "yes" isn't taken as approval — and approve_top confirms anyway.
+        return (
+            f"{head}The most important one: {summary}. "
+            "What would you like to do — approve it, or reject it?"
+        )
 
     @mcp.tool(
         description=(
-            "Approve the single most important decision currently waiting (highest "
-            "risk first) — no request id needed. For HIGH-risk decisions, the first "
-            "call asks for an explicit second confirmation without acting; call "
-            "approve_top again only after the user confirms. LOW-risk decisions need "
-            "one call. Use for approve, yes, allow, confirm, or 'do it'."
+            "Approve the single most important waiting decision (highest risk first) — "
+            "no request id needed. Call this ONLY after the user has EXPLICITLY chosen "
+            "to approve a decision they just heard (e.g. 'approve it', 'allow that', "
+            "'yes, approve'). A bare 'yes', 'okay', or 'sure' with no clear approve "
+            "intent is NOT enough — do not act on an ambiguous reply; ask a short "
+            "confirming question instead. EVERY decision needs two calls: the first "
+            "call only asks the user to confirm and applies nothing; call again after "
+            "they confirm to actually approve."
         )
     )
     async def approve_top() -> str:
@@ -157,18 +158,22 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         top = pend[0]
         rid = top.approval.request_id
 
-        if top.risk.level == RiskLevel.HIGH:
-            deadline = high_risk_confirmations.get(rid)
-            if deadline is None or deadline <= time.monotonic():
-                high_risk_confirmations[rid] = time.monotonic() + confirmation_ttl_s
-                summary = svc.summarizer.approval_summary(
-                    top.approval, top.risk, fast=True
-                )
-                return (
-                    f"{summary} This is high-risk and may be irreversible. "
-                    "Are you sure I should approve it?"
-                )
-            high_risk_confirmations.pop(rid, None)
+        # Every decision — not only HIGH-risk — needs an explicit second confirmation
+        # before it is actually approved. The first approve_top only arms and asks;
+        # nothing is applied. So even if the voice model mistakes a stray "yes" for an
+        # approval and calls approve_top, no real change happens until the user says
+        # yes/approve a second time. This is the deterministic guard behind Option A.
+        deadline = pending_confirmations.get(rid)
+        if deadline is None or deadline <= time.monotonic():
+            pending_confirmations[rid] = time.monotonic() + confirmation_ttl_s
+            summary = svc.summarizer.approval_summary(top.approval, top.risk, fast=True)
+            extra = (
+                " This is high-risk and may be irreversible."
+                if top.risk.level == RiskLevel.HIGH
+                else ""
+            )
+            return f"{summary}.{extra} Say yes or approve again to confirm. Approve it?"
+        pending_confirmations.pop(rid, None)
 
         taken = svc.ambient.take_pending(rid)
         if taken is None:
@@ -188,9 +193,12 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
 
     @mcp.tool(
         description=(
-            "Reject (skip) the single most important decision currently waiting — no "
-            "request id needed. Use when the user says reject, no, deny, skip, or "
-            "'don't' after hearing a decision. One quick call, reliable on Alexa."
+            "Reject (skip) the single most important waiting decision — no request id "
+            "needed. Call this ONLY after the user has EXPLICITLY chosen to reject a "
+            "decision they just heard (e.g. 'reject it', 'deny that', 'no, skip it'). "
+            "A bare 'no', 'okay', or an ambiguous reply is NOT enough — do not act on "
+            "it; ask a short confirming question instead. Rejecting is safe (the step "
+            "just doesn't run), but it must still be the user's explicit choice."
         )
     )
     async def reject_top() -> str:
@@ -200,7 +208,7 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         pend.sort(key=lambda p: 0 if p.risk.level == RiskLevel.HIGH else 1)
         top = pend[0]
         rid = top.approval.request_id
-        high_risk_confirmations.pop(rid, None)
+        pending_confirmations.pop(rid, None)
         taken = svc.ambient.take_pending(rid)
         if taken is None:
             return "That one was already handled."
@@ -255,7 +263,7 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         pending = svc.ambient.take_pending(request_id)
         if pending is None:
             return "I couldn't find that pending decision."
-        high_risk_confirmations.pop(request_id, None)
+        pending_confirmations.pop(request_id, None)
         try:
             await svc.gateway.reject(pending.approval.slot, request_id)
         except ApprovalNotPendingError:

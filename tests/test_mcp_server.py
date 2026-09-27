@@ -81,8 +81,14 @@ async def test_get_pending_decisions_lists_surfaced(tmp_path: Path):
     _surface(ambient, "r1", RiskLevel.HIGH)
     server = build_server(svc)
     out = await _call(server, "get_pending_decisions")
-    assert "First:" in out
-    assert "approve it" in out.lower() and "reject it" in out.lower()
+    # Accessibility requirement: an eyes-free user must HEAR what the decision is, so
+    # the spoken text must include the decision summary itself, not just a question.
+    assert "spoken" in out.lower()          # the risk assessment's spoken_summary
+    # Offers both choices and ends with a question (keeps the Alexa mic open).
+    assert "approve" in out.lower() and "reject" in out.lower()
+    assert out.rstrip().endswith("?")
+    # Plain string now (no JSON wrapper), so the bridge speaks it as words.
+    assert not out.lstrip().startswith("{")
 
 
 async def test_approve_high_risk_requires_confirmation(tmp_path: Path):
@@ -163,6 +169,24 @@ async def test_approve_top_confirms_high_risk_then_approves_it_first(tmp_path: P
     assert gw.approved == ["high1"]              # HIGH went first
     assert ambient.take_pending("high1") is None  # removed from queue
     assert ambient.take_pending("low1") is not None  # low still waiting
+
+
+async def test_approve_top_confirms_low_risk_too(tmp_path: Path):
+    # Option A: even a LOW-risk decision needs a second, explicit confirmation, so an
+    # ambiguous "yes" that the voice model mis-read as approve can never apply a real
+    # decision on the first call.
+    svc, gw, ambient = _services(tmp_path)
+    _surface(ambient, "low1", RiskLevel.LOW)
+    server = build_server(svc)
+
+    first = await _call(server, "approve_top")
+    assert first.rstrip().endswith("?")          # asks to confirm, does not apply
+    assert gw.approved == []
+    assert any(p.approval.request_id == "low1" for p in ambient.pending_decisions())
+
+    second = await _call(server, "approve_top")
+    assert "approved" in second.lower()
+    assert gw.approved == ["low1"]               # applied only on the second call
 
 
 async def test_reject_top_rejects_highest_risk_first(tmp_path: Path):
