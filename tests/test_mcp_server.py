@@ -146,13 +146,20 @@ async def test_get_status_includes_ambient_and_sessions(tmp_path: Path):
 # ---- approve_top / reject_top (the Alexa-reliable, no-elicitation path) ------
 
 
-async def test_approve_top_approves_highest_risk_first(tmp_path: Path):
+async def test_approve_top_confirms_high_risk_then_approves_it_first(tmp_path: Path):
     svc, gw, ambient = _services(tmp_path)
     _surface(ambient, "low1", RiskLevel.LOW, slot="s1")
     _surface(ambient, "high1", RiskLevel.HIGH, slot="s2")
     server = build_server(svc)
-    out = await _call(server, "approve_top")
-    assert "approved" in out.lower()
+
+    first = await _call(server, "approve_top")
+    assert "high-risk" in first.lower()
+    assert first.endswith("?")
+    assert gw.approved == []
+    assert any(p.approval.request_id == "high1" for p in ambient.pending_decisions())
+
+    second = await _call(server, "approve_top")
+    assert "approved" in second.lower()
     assert gw.approved == ["high1"]              # HIGH went first
     assert ambient.take_pending("high1") is None  # removed from queue
     assert ambient.take_pending("low1") is not None  # low still waiting

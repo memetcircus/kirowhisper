@@ -56,10 +56,17 @@ async def test_auth_token_query_and_origin_header():
 
 async def test_approve_sends_past_tense_action():
     captured = {}
+    state = {"resolved": ""}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"messages": [{
+                "role": "permission",
+                "meta": {"approval_id": "req-123", "resolved": state["resolved"]},
+            }]})
         captured["path"] = request.url.path
         captured["body"] = json.loads(request.content)
+        state["resolved"] = captured["body"]["action"]
         return httpx.Response(200, json={"ok": True})
 
     gw = _client(handler)
@@ -75,9 +82,17 @@ async def test_approve_sends_past_tense_action():
 
 async def test_reject_and_trust_actions():
     captured = {}
+    state = {"resolved": ""}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"messages": [{
+                "role": "permission",
+                "meta": {"approval_id": "r", "resolved": state["resolved"]},
+            }]})
         captured["body"] = json.loads(request.content)
+        if captured["body"]["action"] == ACTION_REJECT:
+            state["resolved"] = ACTION_REJECT
         return httpx.Response(200, json={"ok": True})
 
     gw = _client(handler)

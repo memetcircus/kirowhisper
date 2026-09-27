@@ -20,12 +20,15 @@ async def _run_mcp() -> None:
     server, services = build_app()
     services.ambient.start()
     try:
-        # SSE mode (json_response=False, the default): elicitation is a server->client
-        # request that needs the back-channel the SSE stream provides. json_response
-        # has no back-channel, so ctx.elicit() raises NoBackChannelError. The tradeoff
-        # is that tunnels drop idle SSE streams; we keep the stream alive during an
-        # elicitation by pinging the client every ~15s (see triage_next_decision).
-        await server.run_streamable_http_async()
+        # Stateless HTTP: every request stands alone, so there is no server-side
+        # session to expire and no "Session not found" after an idle gap. The
+        # voice flow (get_pending_decisions + approve_top/reject_top) makes no
+        # server->client requests, so it needs neither an SSE back-channel nor a
+        # persistent session. Earlier we ran SSE for ctx.elicit(), but the Alexa
+        # bridge keeps one long-lived agent per user and cloudflared drops idle
+        # SSE streams, so that session died between turns and the next tool call
+        # failed. Elicitation is gone; stateless removes the whole failure class.
+        await server.run_streamable_http_async(stateless_http=True, json_response=True)
     finally:
         await services.ambient.stop()
         with contextlib.suppress(Exception):

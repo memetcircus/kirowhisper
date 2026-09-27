@@ -14,6 +14,7 @@ Critical gotcha (spike-verified): to APPROVE, the action string must be
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 import subprocess
 from typing import Any
@@ -26,6 +27,10 @@ from .models import Approval
 
 class GatewayError(RuntimeError):
     """Raised when a Gateway request fails."""
+
+
+class ApprovalNotPendingError(GatewayError):
+    """Raised when an approval expired or was resolved before this action."""
 
 
 # Action strings the Gateway's approve endpoint understands (spike-verified).
@@ -191,16 +196,74 @@ class GatewayClient:
                     return approval
         return None
 
-    async def resolve(self, slot: str, request_id: str, action: str) -> dict[str, Any]:
-        """POST /api/chat/slots/<slot>/approve — resolve a pending approval.
+    async def get_slot_approval_status(self, slot: str, request_id: str) -> str:
+        """Return the exact permission's current state from the slot history.
 
-        action must be one of ACTION_APPROVE / ACTION_REJECT / ACTION_TRUST.
+        ``pending`` means the permission exists and has no ``meta.resolved``
+        value. Other values are normalized Gateway resolution states such as
+        ``approved``, ``rejected`` or ``stale``. ``missing`` is fail-closed:
+        callers must not treat an unknown approval as actionable.
+        """
+        if not slot:
+            return "missing"
+        slot_obj = await self.get_slot(slot)
+        messages = slot_obj.get("messages", [])
+        for msg in reversed(messages):
+            if msg.get("role") != "permission":
+                continue
+            meta = msg.get("meta", {}) or {}
+            approval_id = str(meta.get("approval_id") or meta.get("request_id") or "")
+            if approval_id != request_id:
+                continue
+            resolved = str(meta.get("resolved") or "").strip().lower()
+            return resolved or "pending"
+        return "missing"
+
+    async def resolve(self, slot: str, request_id: str, action: str) -> dict[str, Any]:
+        """Resolve a pending approval and verify the resulting slot state.
+
+        The Gateway may return HTTP 200 / ``{"ok": true}`` even when a racing
+        deny-on-silence timeout already handled the permission. For approve and
+        reject, success therefore means the exact permission's
+        ``meta.resolved`` value matches the requested action after the POST.
         """
         if action not in (ACTION_APPROVE, ACTION_REJECT, ACTION_TRUST):
             raise GatewayError(f"invalid resolve action: {action!r}")
-        return await self._post(
+
+        # Trust applies to a slot rather than one exact permission and has no
+        # stable per-permission postcondition in the observed Gateway contract.
+        if action == ACTION_TRUST:
+            return await self._post(
+                f"/api/chat/slots/{slot}/approve",
+                {"action": action, "request_id": request_id},
+            )
+
+        before = await self.get_slot_approval_status(slot, request_id)
+        if before != "pending":
+            raise ApprovalNotPendingError(
+                f"approval {request_id} is no longer pending (state: {before})"
+            )
+
+        result = await self._post(
             f"/api/chat/slots/{slot}/approve",
             {"action": action, "request_id": request_id},
+        )
+
+        # Slot state is normally updated synchronously. Allow two short retries
+        # for propagation without spending a meaningful part of Alexa's budget.
+        for attempt in range(3):
+            after = await self.get_slot_approval_status(slot, request_id)
+            if after == action:
+                return result
+            if after != "pending":
+                raise ApprovalNotPendingError(
+                    f"approval {request_id} resolved as {after}, not {action}"
+                )
+            if attempt < 2:
+                await asyncio.sleep(0.05)
+
+        raise GatewayError(
+            f"approval {request_id} did not resolve as {action}; it is still pending"
         )
 
     async def approve(self, slot: str, request_id: str) -> dict[str, Any]:

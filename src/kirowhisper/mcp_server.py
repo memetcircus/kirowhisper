@@ -22,6 +22,7 @@ by request_id remain for callers that already hold an id.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from mcp.server.mcpserver import MCPServer
@@ -29,7 +30,7 @@ from mcp.server.mcpserver import MCPServer
 from .ambient import AmbientEngine
 from .audit import AuditLog
 from .config import Config
-from .gateway_client import GatewayClient, GatewayError
+from .gateway_client import ApprovalNotPendingError, GatewayClient, GatewayError
 from .models import DecisionAction, RiskLevel
 from .summarizer import Summarizer
 
@@ -76,6 +77,19 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         ),
     )
     svc = services
+    high_risk_confirmations: dict[str, float] = {}
+    confirmation_ttl_s = 30.0
+
+    def prune_confirmations(live_ids: set[str]) -> None:
+        """Forget confirmations that expired or no longer match a live decision."""
+        now = time.monotonic()
+        stale = [
+            rid
+            for rid, deadline in high_risk_confirmations.items()
+            if rid not in live_ids or deadline <= now
+        ]
+        for rid in stale:
+            high_risk_confirmations.pop(rid, None)
 
     @mcp.tool(description="Spoken overall status: what Crew is doing and what Ambient handled.")
     async def get_status() -> str:
@@ -127,23 +141,42 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
     @mcp.tool(
         description=(
             "Approve the single most important decision currently waiting (highest "
-            "risk first) — no request id needed. Use when the user says approve, yes, "
-            "allow, confirm, or 'do it' after hearing a decision. One quick call, "
-            "reliable on Alexa."
+            "risk first) — no request id needed. For HIGH-risk decisions, the first "
+            "call asks for an explicit second confirmation without acting; call "
+            "approve_top again only after the user confirms. LOW-risk decisions need "
+            "one call. Use for approve, yes, allow, confirm, or 'do it'."
         )
     )
     async def approve_top() -> str:
         pend = svc.ambient.pending_decisions()
+        live_ids = {item.approval.request_id for item in pend}
+        prune_confirmations(live_ids)
         if not pend:
             return "There's nothing waiting for you right now."
         pend.sort(key=lambda p: 0 if p.risk.level == RiskLevel.HIGH else 1)
         top = pend[0]
         rid = top.approval.request_id
+
+        if top.risk.level == RiskLevel.HIGH:
+            deadline = high_risk_confirmations.get(rid)
+            if deadline is None or deadline <= time.monotonic():
+                high_risk_confirmations[rid] = time.monotonic() + confirmation_ttl_s
+                summary = svc.summarizer.approval_summary(
+                    top.approval, top.risk, fast=True
+                )
+                return (
+                    f"{summary} This is high-risk and may be irreversible. "
+                    "Are you sure I should approve it?"
+                )
+            high_risk_confirmations.pop(rid, None)
+
         taken = svc.ambient.take_pending(rid)
         if taken is None:
             return "That one was already handled."
         try:
             await svc.gateway.approve(taken.approval.slot, rid)
+        except ApprovalNotPendingError:
+            return "That approval expired or was already handled. Nothing was approved."
         except GatewayError as exc:
             svc.ambient.requeue(taken)
             return f"I couldn't apply the approval: {exc}. It's still pending."
@@ -167,11 +200,14 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         pend.sort(key=lambda p: 0 if p.risk.level == RiskLevel.HIGH else 1)
         top = pend[0]
         rid = top.approval.request_id
+        high_risk_confirmations.pop(rid, None)
         taken = svc.ambient.take_pending(rid)
         if taken is None:
             return "That one was already handled."
         try:
             await svc.gateway.reject(taken.approval.slot, rid)
+        except ApprovalNotPendingError:
+            return "That approval expired or was already handled. Nothing was rejected."
         except GatewayError as exc:
             svc.ambient.requeue(taken)
             return f"I couldn't apply the rejection: {exc}. It's still pending."
@@ -199,6 +235,8 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
             return f"{summary} This is high-risk. Say approve again with confirmed=true to proceed."
         try:
             await svc.gateway.approve(pending.approval.slot, request_id)
+        except ApprovalNotPendingError:
+            return "That approval expired or was already handled. Nothing was approved."
         except GatewayError as exc:
             svc.ambient.requeue(pending)
             return f"I couldn't apply the approval: {exc}. It's still pending."
@@ -217,8 +255,11 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         pending = svc.ambient.take_pending(request_id)
         if pending is None:
             return "I couldn't find that pending decision."
+        high_risk_confirmations.pop(request_id, None)
         try:
             await svc.gateway.reject(pending.approval.slot, request_id)
+        except ApprovalNotPendingError:
+            return "That approval expired or was already handled. Nothing was rejected."
         except GatewayError as exc:
             svc.ambient.requeue(pending)
             return f"I couldn't apply the rejection: {exc}. It's still pending."
