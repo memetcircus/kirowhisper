@@ -36,10 +36,16 @@ def decide(
     if risk.level in (RiskLevel.HIGH, RiskLevel.UNKNOWN):
         return DecisionAction.SURFACE, risk.reason or f"{risk.level} risk needs a human"
 
-    # LOW: auto-approve only if the user granted session trust (R3.1); else surface.
+    # LOW: auto-approve only if the user granted session trust (R3.1) AND the LOW
+    # was decided deterministically (a rule, not a model guess). A model-guessed
+    # LOW is never silently approved, even under trust — when we are not certain,
+    # we still ask. This keeps trust from becoming a hole the classifier can fall
+    # through.
     if risk.level == RiskLevel.LOW:
+        if session_trust and risk.deterministic:
+            return DecisionAction.AUTO_APPROVE, "low risk (rule-certain), session trusted"
         if session_trust:
-            return DecisionAction.AUTO_APPROVE, "low risk, session trusted"
+            return DecisionAction.SURFACE, "low risk but model-guessed; surfacing despite trust"
         return DecisionAction.SURFACE, "low risk, but no session trust yet"
 
     # Defensive default (should be unreachable): surface.

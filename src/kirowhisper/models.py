@@ -81,6 +81,11 @@ class RiskAssessment:
     level: RiskLevel
     reason: str = ""
     spoken_summary: str = ""
+    # True only when a deterministic rule decided this (not the model). Session
+    # trust auto-approves LOW only when it is deterministic: a model-guessed LOW
+    # must still be surfaced, so an uncertain call is never silently approved even
+    # under trust. Security leans on what we know for sure, not on a guess.
+    deterministic: bool = False
 
 
 @dataclass(frozen=True)

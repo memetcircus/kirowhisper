@@ -67,22 +67,25 @@ class RuleClassifier:
             hit = self._first_match(haystack, _DESTRUCTIVE_PATTERNS)
             if hit:
                 reason = f"shell command: {hit}"
-            return RiskAssessment(RiskLevel.HIGH, reason)
+            return RiskAssessment(RiskLevel.HIGH, reason, deterministic=True)
 
         # 2) Destructive/irreversible content anywhere -> HIGH (R2.3).
         hit = self._first_match(haystack, _DESTRUCTIVE_PATTERNS)
         if hit:
-            return RiskAssessment(RiskLevel.HIGH, hit)
+            return RiskAssessment(RiskLevel.HIGH, hit, deterministic=True)
 
         # 3) Secret exposure -> HIGH (R2.4).
         hit = self._first_match(haystack, _SECRET_EXPOSURE_PATTERNS)
         if hit:
-            return RiskAssessment(RiskLevel.HIGH, f"possible secret exposure: {hit}")
+            return RiskAssessment(
+                RiskLevel.HIGH, f"possible secret exposure: {hit}", deterministic=True
+            )
 
         # 4) Read-only / clearly reversible -> LOW (R2.2). Only reached when none
-        #    of the danger rules fired above.
+        #    of the danger rules fired above. deterministic=True: this is the only
+        #    LOW that session trust may auto-approve.
         if approval.is_read_only:
-            return RiskAssessment(RiskLevel.LOW, "read-only operation")
+            return RiskAssessment(RiskLevel.LOW, "read-only operation", deterministic=True)
 
         # 5) Inconclusive -> defer to the model layer.
         return None

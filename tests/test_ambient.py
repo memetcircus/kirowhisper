@@ -25,9 +25,18 @@ def test_policy_high_and_unknown_surface():
 
 
 def test_policy_low_needs_trust():
-    assert decide(RiskAssessment(RiskLevel.LOW, "x"))[0] == DecisionAction.SURFACE
-    trusted = decide(RiskAssessment(RiskLevel.LOW, "x"), session_trust=True)[0]
-    assert trusted == DecisionAction.AUTO_APPROVE
+    # A deterministic (rule-certain) LOW surfaces without trust, auto-approves with it.
+    det_low = RiskAssessment(RiskLevel.LOW, "x", deterministic=True)
+    assert decide(det_low)[0] == DecisionAction.SURFACE
+    assert decide(det_low, session_trust=True)[0] == DecisionAction.AUTO_APPROVE
+
+
+def test_policy_model_guessed_low_surfaces_even_under_trust():
+    # A model-guessed LOW (deterministic=False) must NOT be silently approved even
+    # under trust: when we are not certain, we still ask. This closes the hole where
+    # a misclassified dangerous op could slip through as "LOW" while trust is on.
+    model_low = RiskAssessment(RiskLevel.LOW, "x")  # deterministic defaults to False
+    assert decide(model_low, session_trust=True)[0] == DecisionAction.SURFACE
 
 
 def test_policy_explicit_deny_blocks():
@@ -69,13 +78,20 @@ class FailingGateway:
 
 
 class FixedClassifier:
-    """Returns a fixed risk level regardless of the approval."""
+    """Returns a fixed risk level regardless of the approval.
 
-    def __init__(self, level: RiskLevel):
+    deterministic defaults to True so LOW behaves like a rule-certain read-only
+    (auto-approvable under trust); tests that want a model-guessed LOW pass False.
+    """
+
+    def __init__(self, level: RiskLevel, *, deterministic: bool = True):
         self._level = level
+        self._deterministic = deterministic
 
     def classify(self, _approval):
-        return RiskAssessment(self._level, f"{self._level} fixed")
+        return RiskAssessment(
+            self._level, f"{self._level} fixed", deterministic=self._deterministic
+        )
 
 
 def _ap(rid: str, slot: str = "s") -> Approval:
