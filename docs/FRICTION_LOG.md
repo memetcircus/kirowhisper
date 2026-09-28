@@ -132,11 +132,14 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
   this turn's fresh tool result — the count lived inside a prose sentence, which the
   model treats as reworkable text.
 - **Severity:** Medium (wrong, alarming numbers erode trust in an oversight tool).
-- **Workaround:** Return the count as a real structured field (`pending_count` in
-  `structuredContent`), which the bridge treats as authoritative over prose, plus a
-  prompt rule that a fresh tool number always overrides anything said earlier.
-- **Suggestion:** For voice, keep authoritative values (counts, ids, amounts) in
-  structured fields, never only in the spoken sentence.
+- **Workaround:** First returned the count as a structured field (`pending_count`) plus
+  a prompt rule that a fresh number overrides earlier ones. **This was later reversed —
+  see F14:** returning `structuredContent` made the bridge drop the spoken text, so the
+  final fix was plain text (`structured_output=False`) with the count in the sentence,
+  and a source-level fix (ghost-entry cleanup in the ambient engine) that keeps the
+  count correct regardless.
+- **Suggestion:** For voice, the real fix was upstream — keep the pending set correct at
+  the source rather than trusting the model to relay a number.
 
 ### F11 — MCP session died between turns on a tunnelled SSE stream
 - **Task:** Serve the MCP server to a long-lived agent (Alexa+ via the bridge) through
@@ -191,10 +194,65 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
 - **Suggestion:** Bake a "requires confirmation" attribute into the approval model so
   every client enforces it consistently.
 
+### F13 — Alexa+ sometimes answers instead of routing to the skill
+- **Task:** Say a natural request ("what needs my decision") inside an open skill
+  session and have it reach our skill.
+- **Steps:** Opened the skill, then spoke intents; inspected CloudWatch to see whether
+  the Lambda was actually invoked.
+- **Expected:** While the skill session is open, utterances go to the skill.
+- **Actual:** Some phrasings were answered by Alexa+'s own general assistant and never
+  reached our Lambda at all (no invocation logged), producing plausible but fabricated
+  replies with zero backend effect. It was intermittent and depended on wording.
+- **Severity:** High (silent: the user hears a confident answer that did nothing).
+- **Workaround:** Prefer the explicit "ask &lt;skill&gt; …" launch form, which routed
+  reliably; and always verify real effect against the backend, never trust the spoken
+  reply alone. We also learned to compare a direct MCP call with the bridge turn to tell
+  "Alexa answered" from "the tool ran."
+- **Suggestion:** A clearer contract for when an open skill session keeps the turn vs.
+  when the platform reclaims it would make skill behavior predictable.
+
+### F14 — A `-> str` MCP tool still advertises an output schema, which broke voice
+- **Task:** Return a spoken sentence from a tool and have the agent read it aloud.
+- **Steps:** Tool typed `-> str`; the Python MCP SDK auto-detected structured output and
+  advertised an `outputSchema` (`{"result": string}`) plus `structuredContent`.
+- **Expected:** A plain string is spoken as-is.
+- **Actual:** Two failures. (1) The bridge sends the model a single block and, when
+  `structuredContent` is present, drops the text — so the model treated the sentence as
+  data to summarize and skipped reading the decision aloud (unusable for an eyes-free
+  user). (2) After we changed the shape, a warm agent had cached the old schema and the
+  SDK rejected the new result with `-32600/-32602 "... output schema ..."`.
+- **Severity:** High (the decision content — the whole point — wasn't spoken).
+- **Workaround:** Set `structured_output=False` so the tool returns one plain-text block
+  (words to speak, no schema to drift). Also taught the bridge client to treat a
+  stale-schema error like a stale session: drop the client and reconnect once, which
+  re-lists tools against the current schema.
+- **Suggestion:** Make it obvious that a `-> str` return still opts into structured
+  output, and document how a client should behave when a server's schema changes.
+
+### F15 — Confirmation turn closed the session because the reply wasn't a question
+- **Task:** Two-step voice approval: after "approve it", ask "are you sure?", then apply
+  on the user's "yes".
+- **Steps:** The confirm tool returned a prompt; the bridge decides `shouldEndSession`
+  from whether the spoken reply ends in "?" (`endsWithQuestion`).
+- **Expected:** The confirm prompt keeps the mic open so the user's "yes" reaches the
+  skill and the second call fires.
+- **Actual:** The model rewrote our question ("...approve it?") into a period-ending
+  command ("...to confirm you want this to run."). No "?" → the bridge closed the
+  session → the confirming "yes" went to Alexa+, not the skill → the second call never
+  fired and nothing applied (while Alexa+ said "approved" — see F13).
+- **Severity:** High (the confirmed action silently didn't happen).
+- **Workaround:** Made the confirm prompt one short, bare question the model is least
+  likely to reword ("To confirm, are you sure you want to approve this?"), and made the
+  tool description state plainly that approval takes two calls and the model must call
+  again on confirmation. Verified live end-to-end: arm → "yes" reaches skill → second
+  call fires → file actually deleted.
+- **Suggestion:** A first-class "expects an answer / keep the mic open" signal from the
+  tool result would be far more robust than inferring intent from a trailing "?".
+
 ---
 
 ## Severity tally
-- High: F1, F2, F8, F11, F12
+- High: F1, F2, F8, F11, F12, F13, F14, F15
 - Medium: F3, F4, F5, F7, F9, F10
 - Low: F6
 
@@ -203,8 +261,12 @@ string, where the pending approval lives) rather than capability gaps — the
 capabilities were all there. Better client docs would remove the majority of these.
 The browser voice frictions (F8, F9) were the exception: real behavioral gaps in the
 Web Speech API that only surface once you wire up genuine hands-free interaction, and
-they pushed us to a more reliable host-TTS architecture. The later frictions (F10–F12)
-came from the real Alexa+ device path via the MCP bridge: a long-lived, tunnelled agent
-session surfaces stale-value, dead-session, and safety-confirmation issues that never
-appear in short-lived local calls, and each pushed a concrete fix (structured values,
-stateless HTTP, and a real second confirmation on the voice path).
+they pushed us to a more reliable host-TTS architecture. The later frictions (F10–F15)
+came from the real Alexa+ device path via the MCP bridge, and they share a theme: a
+long-lived, tunnelled, model-driven session behaves nothing like a short-lived local
+call. Stale values (F10), dead sessions (F11), missing/lost confirmation (F12, F15),
+the platform answering instead of the skill (F13), and schema-vs-plain-text output
+(F14) only appeared once real speech drove a real agent. Each pushed a concrete fix,
+and the recurring lesson was the same: never trust the spoken reply as proof — verify
+the real effect at the source, and keep the safety-critical logic deterministic rather
+than dependent on how the model phrases a turn.
