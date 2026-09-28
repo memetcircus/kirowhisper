@@ -34,7 +34,7 @@ from kirowhisper.config import load_config
 # Only slots with one of these name prefixes are ever eligible for deletion.
 TEST_PREFIXES = ("kw-simdemo-", "kw-livedemo-", "kw-safety-smoke-", "kw-simulator-live-",
                  "kw-sim-now-", "kw-demo-loop-", "kw-multi-", "kw-structtest", "kw-safety-",
-                 "kw-high-", "kw-lowread-", "kw-approvetest-")
+                 "kw-high-", "kw-lowread-", "kw-approvetest-", "kw-status-")
 
 
 def _token(cmd: str) -> str:
