@@ -288,8 +288,23 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
     )
     async def trust_session() -> str:
         svc.ambient.set_session_trust(True)
-        return ("Session trusted. I'll auto-approve low-risk steps and still ask you "
-                "about anything high-risk or uncertain.")
+        # Also clear low-risk items ALREADY waiting, not just future ones — otherwise
+        # "trust this session" leaves the current safe steps still asking, which feels
+        # broken. Only rule-certain LOW clears; HIGH/UNKNOWN/model-guessed stay.
+        cleared = await svc.ambient.apply_trust_to_pending()
+        remaining = len(svc.ambient.pending_decisions())
+        cleared_line = (
+            f" I cleared {cleared} low-risk step(s) that were waiting." if cleared else ""
+        )
+        remaining_line = (
+            f" {remaining} decision(s) still need you."
+            if remaining
+            else " Nothing else is waiting."
+        )
+        return (
+            "Session trusted. I'll auto-approve low-risk steps and still ask you about "
+            f"anything high-risk or uncertain.{cleared_line}{remaining_line}"
+        )
 
     @mcp.tool(description="A short spoken summary of a task result or a diff.")
     async def summarize(task_id: str = "") -> str:
