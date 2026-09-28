@@ -138,14 +138,15 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
 
     @mcp.tool(
         description=(
-            "Approve the single most important waiting decision (highest risk first) — "
-            "no request id needed. Call this ONLY after the user has EXPLICITLY chosen "
-            "to approve a decision they just heard (e.g. 'approve it', 'allow that', "
-            "'yes, approve'). A bare 'yes', 'okay', or 'sure' with no clear approve "
-            "intent is NOT enough — do not act on an ambiguous reply; ask a short "
-            "confirming question instead. EVERY decision needs two calls: the first "
-            "call only asks the user to confirm and applies nothing; call again after "
-            "they confirm to actually approve."
+            "Approve the highest-risk waiting decision — no request id needed. "
+            "EVERY approval takes TWO calls to this tool. First call: it returns a "
+            "confirmation question and applies NOTHING. When the user then confirms "
+            "(says yes, approve, confirm, go ahead, do it), you MUST CALL approve_top "
+            "AGAIN — that second call is what actually approves. Speaking a "
+            "confirmation without calling the tool again does nothing. Only skip the "
+            "second call if the user clearly declines. Do not call this on a vague "
+            "'yes' that was answering some other question — only when the user is "
+            "approving the decision they just heard."
         )
     )
     async def approve_top() -> str:
@@ -172,7 +173,13 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
                 if top.risk.level == RiskLevel.HIGH
                 else ""
             )
-            return f"{summary}.{extra} Say yes or approve again to confirm. Approve it?"
+            # Keep this SHORT and end with a bare yes/no question. If the spoken
+            # reply doesn't end in "?", the Alexa bridge (endsWithQuestion) closes the
+            # session and the user's confirming "yes" goes to Alexa+, not this skill —
+            # so the second approve_top never fires and nothing is applied. A short,
+            # single question is the wording the model is least likely to rewrite into
+            # a period-ending command.
+            return f"{summary}.{extra} To confirm, are you sure you want to approve this?"
         pending_confirmations.pop(rid, None)
 
         taken = svc.ambient.take_pending(rid)
