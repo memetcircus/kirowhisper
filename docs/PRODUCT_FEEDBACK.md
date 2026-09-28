@@ -35,6 +35,12 @@ and `kirocrew token` gives a clean way to authenticate a local client.
 - Pending approvals were most reliably read from the slot's `role:"permission"`
   messages (with `meta.approval_id`), not the slot's `pending_approval` field, which
   stayed null in our runs. Documenting the canonical source would help.
+- **`is_read_only` / `is_shell` are not always populated as you'd expect.** A plain
+  file-read approval came through with `is_read_only=False`, so we could not treat it
+  as rule-certain safe. This is actually *why* our defense-in-depth design matters: we
+  never auto-approve on an unverified flag — an unclear signal just gets surfaced. A
+  more consistently populated read-only/side-effect flag would let clients auto-clear
+  more safe steps with confidence.
 
 **Onboarding (zero to hello world).** Installing and launching Crew was smooth. Going
 from "it's running" to "my code can drive it" was the hard part — mostly the auth
@@ -90,12 +96,18 @@ docs would reduce surprise.
   flow makes no server→client requests (no elicitation), `stateless_http=True` with
   `json_response=True` removed the whole failure class — every call stands alone. A
   short "pick stateless unless you elicit" note in the docs would help.
-- **Keep authoritative values in `structuredContent`, not just text.** A tool that
-  returned its count inside a prose sentence let a long-lived agent paraphrase a stale
-  number from an earlier turn. Moving the count into a real structured field (which the
-  client treats as authoritative) fixed it. This is easy to do once you know the
-  unstructured text and `structuredContent` are both sent and the client prefers the
-  latter.
+- **`structuredContent` vs plain text is a genuine trade-off with an MCP agent.** Our
+  first instinct was to return values as `structuredContent` so the client treats them
+  as authoritative. But the Alexa bridge feeds the model a single block and, when a
+  tool returns structured content, it sends only that JSON and drops the text — so the
+  model treated our carefully written spoken sentence as raw *data* to summarize, and
+  skipped reading the decision aloud (unusable for an eyes-free user). It also broke
+  after a schema change: a warm client had cached the old output schema and rejected
+  the new result (`-32600/-32602`). For a tool whose output *is* the thing to speak,
+  we set `structured_output=False` so it returns one plain-text block — words to speak,
+  no schema to drift. Lesson: structured output is great for data a client will render,
+  but a `-> str` tool still auto-advertises a schema; disable it when the string is the
+  spoken answer.
 
 **Onboarding.** Fast, after resolving the 1.x-vs-2.x confusion. Introspecting the
 installed package (`inspect.signature`) was the quickest way to get the current API.

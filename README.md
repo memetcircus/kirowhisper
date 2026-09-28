@@ -50,6 +50,38 @@ from the screen — the curb-cut effect.
 
 ---
 
+## How the risk filter actually works (defense-in-depth)
+
+We're honest about this: **the classifier is deterministic guardrails first, a model
+only for the ambiguous cases** — not "an AI decides everything."
+
+1. **Deterministic rules run first** (`risk.py`). Fast, testable pattern rules flag the
+   clearly dangerous — shell commands, `rm -rf`, `DROP TABLE`, force-push, secret/`.env`
+   exposure — as HIGH, and clearly reversible read-only ops as LOW. Rules only ever
+   *raise* risk; they never downgrade a HIGH.
+2. **Amazon Bedrock (Nova) handles only what the rules can't decide.** When the rules
+   are inconclusive, the model classifies. On any error or doubt it returns **UNKNOWN**,
+   never LOW.
+3. **When unsure, surface.** HIGH and UNKNOWN always reach a human. Nothing destructive
+   is silently downgraded.
+
+Two safety properties fall out of this, and both are enforced in code and tested:
+
+- **Trust never becomes a hole.** "Trust this session" auto-approves LOW steps — but
+  *only rule-certain* LOW (e.g. a verified read-only op). A LOW that the *model merely
+  guessed* is still surfaced, even under trust. Security leans on what we know for sure,
+  not on a guess. *(Verified live: with trust on, a file-read that Crew did not flag
+  read-only was not auto-approved — it still asked.)*
+- **High-risk needs a second confirmation.** By voice, the first "approve" only asks
+  "are you sure?"; the decision is applied only on an explicit second confirmation. A
+  stray "yes" can never fire a destructive step on its own.
+
+A blacklist of patterns is not a security product — so we don't oversell it. It's a
+fast, reliable first layer that fails safe (toward surfacing), backed by the model for
+nuance and by a human for anything uncertain.
+
+---
+
 ## Architecture
 
 ```
