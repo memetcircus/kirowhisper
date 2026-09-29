@@ -164,11 +164,19 @@ Crew hands over all approvals equally. The intelligence is in OUR layer:
 - **Priority:** DIFFERENTIATOR
 
 ## UC-7 — Context tracking (state across sessions)
-- **Actor:** Deniz. **Trigger:** "Which one failed?"
-- **Flow:** The system tracks which of several tasks is being referred to. "Task 2 —
-  tests are red. Want me to open it?"
-- **Spike:** ✅ `GET /api/spawn` (list + states). The "which" resolution is ours (short memory).
-- **Priority:** DIFFERENTIATOR (the rules consider this "creative")
+- **Actor:** Deniz. **Trigger:** "Which one failed?" / "Tell me about that session."
+- **Flow:** The system reports which task hit trouble and, on a follow-up, describes what
+  a session was asked to do and where it stands. Because Crew exposes no structured
+  per-task failure field, health is inferred from each session's own last message and
+  phrased honestly ("reported a problem", not asserted failure).
+- **Status:** ✅ Built and **verified live on Alexa** via two read-only tools:
+  `check_task_health` ("which task failed", "did anything break") names the troubled task
+  first, then a roll-up; `describe_session` ("tell me about that session", "what is it
+  working on") speaks the task and current state. Both keep the mic open for follow-ups.
+- **Spike:** ✅ `GET /api/chat/slots` (title, running, messages). The "which"/"that"
+  resolution and the honest health inference are entirely our layer.
+- **Priority:** DIFFERENTIATOR (the rules consider this "creative" — context-aware,
+  multi-turn oversight rather than a single-turn approve/reject)
 
 ## UC-8 — Mid-task redirect
 - **Actor:** Deniz. **Trigger:** while the agent works, "Stop, don't touch that file, run tests first."
@@ -187,8 +195,13 @@ Crew hands over all approvals equally. The intelligence is in OUR layer:
 
 ## UC-10 — Multi-task "standup" summary
 - **Actor:** Deniz. **Trigger:** "What's the overall status?" / morning briefing.
-- **Flow:** "2 of 3 tasks done, one waiting for approval, one failed." (parallel summary)
-- **Spike:** ✅ `GET /api/spawn` + `/api/status`. Bedrock summary.
+- **Flow:** "One reported a problem, two finished cleanly." (parallel roll-up across sessions)
+- **Status:** ✅ Built and **verified live on Alexa** via `check_task_health`, which rolls
+  up all sessions (troubled first, then running / waiting / finished). The session count
+  is drawn from the same source across `get_status`, `check_task_health` and
+  `describe_session` so the numbers always agree (see Friction Log F20).
+- **Spike:** ✅ `GET /api/chat/slots` + `/api/status`. Bedrock phrasing with a
+  deterministic fallback.
 - **Priority:** DIFFERENTIATOR
 
 ## UC-11 — Safe decision record (audit)
@@ -220,7 +233,11 @@ Crew hands over all approvals equally. The intelligence is in OUR layer:
 - **CORE (built + verified live on Alexa):** Ambient Awareness + UC-1 (status digest),
   UC-2 (approve with two-step confirmation), UC-3 (reject), UC-6 (session trust,
   rule-certain only).
-- **DIFFERENTIATOR:** UC-7, UC-9, UC-10, UC-11 (audit).
+- **DIFFERENTIATOR (built + verified live on Alexa):** UC-7 and UC-10 — context-aware,
+  multi-turn oversight via `check_task_health` ("which task failed"), `describe_session`
+  ("tell me about that session"), and `explain_top` ("why is that risky"); plus UC-11
+  (audit). Read-only replies keep the mic open so these chain into one conversation.
+- **DIFFERENTIATOR (designed, not yet built):** UC-9 (clarifying dialogue).
 - **FUTURE (v2, "future work" in submission):** UC-5 (needs an Alexa+ proactive
   channel), UC-8 (mid-task redirect), UC-12 (failure push), voice-starting new tasks.
 
@@ -230,13 +247,19 @@ The product surface is the Alexa skill over our self-hosted MCP server (via the
 the product.
 1. HOOK (0-30s): the maker's own pain — an autonomous Crew, dozens of approvals, the
    fatigue of turning back to the screen; for a blind developer, unusable by voice.
-2. AMBIENT AWARENESS (30-110s): on a real Echo / the Alexa console — "Alexa, open
+2. AMBIENT AWARENESS (30-95s): on a real Echo / the Alexa console — "Alexa, open
    kiro whisper" -> "get status" (the "while you were away" digest: *asked for two,
    I passed one as safe, one is waiting*) -> "what needs my decision" reads the
-   decision aloud -> "approve it" -> **two-step confirmation** -> "yes" -> applied.
-   All of this was verified live against the real backend.
-3. DEPTH (110-150s): defense-in-depth — deterministic rules first, Bedrock for the
-   ambiguous, trust that never auto-approves a guess, two-step confirm on every action.
-4. CURB-CUT (150-180s): "a comfort for me; for a blind developer, being able to
-   oversee an autonomous agent without any dependence on a screen — because voice
-   alone cannot be scanned, and without a filter it is unusable."
+   decision aloud -> "why is that risky" (`explain_top` — the guardrail's own reason) ->
+   "approve it" -> **two-step confirmation** -> "yes" -> applied. All verified live
+   against the real backend.
+3. CONVERSATIONAL OVERSIGHT (95-130s): the part that isn't a single-turn bot — one open
+   session, chained by voice: "get status" -> "which task failed" (`check_task_health`)
+   -> "tell me about that session" (`describe_session`). Each reply keeps the mic open,
+   and every tool reports the same session count. This is the "context-aware add-on that
+   maintains state across turns" the judging rubric calls creative.
+4. DEPTH + CURB-CUT (130-180s): defense-in-depth — deterministic rules first, Bedrock
+   for the ambiguous, trust that never auto-approves a guess, two-step confirm on every
+   action — closing on the accessibility case: for a blind developer, overseeing an
+   autonomous agent with no dependence on a screen, because voice alone cannot be
+   scanned and without a filter it is unusable.

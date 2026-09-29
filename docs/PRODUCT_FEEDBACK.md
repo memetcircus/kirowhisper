@@ -151,6 +151,22 @@ two-step approve all worked by voice against the real backend.
   approval in ~60–75s (see Friction Log F6). Opening the skill and speaking often
   outran that window, so we ran a tiny helper that always keeps one fresh throwaway
   approval waiting during testing.
+- **A newly added tool is invisible until a cold container re-lists tools.** The agent
+  fetches `tools/list` once per warm session and caches it; the hosting container can
+  live for hours, so a tool we added and verified live on the server stayed unknown to
+  the agent through *every* lighter fix — regenerating and deploying the interaction
+  model, redeploying the Lambda, restarting the MCP server, updating the runtime's env,
+  changing the tunnel URL, even a brief server outage. Only `npm run destroy && npm run
+  deploy` (recreating the runtime so a cold container runs a fresh `listTools()`) made
+  it reachable. Net effect: **adding one voice tool is a four-step deploy** — generate,
+  skill:deploy, deploy, and recreate the runtime — not a one-liner (Friction Log F17).
+- **Adding tools is a multi-surface deploy, and each surface can fail quietly.** Beyond
+  the warm cache, the interaction-model regenerate can silently degrade to template
+  utterances under a Bedrock daily-token cap (so the natural phrases the user says are
+  missing — F18), and a new read-only reply that doesn't end in a question closes the
+  session so follow-ups miss the skill (F19). A short "checklist for adding a tool"
+  (regen model + author overrides, redeploy skill + Lambda, recreate the runtime, make
+  replies end in a question) would turn a day of debugging into a five-minute routine.
 
 **Onboarding.** The bridge's own docs and CLI (`npm run chat --remote`) made it possible
 to reproduce the deployed path locally, which was essential — the fastest way to tell
@@ -210,5 +226,5 @@ to a dedicated STT/TTS (or Crew's built-in Piper/Transcribe voice).
 | Kiro Crew Gateway | ✅ | Great primitive; document the client auth shape. |
 | Amazon Bedrock (Converse) | ✅ | Model-agnostic Converse made "rules + model" cheap and clean. |
 | MCP Python SDK | ✅ | Streamable HTTP is easy; pick stateless mode behind a tunnel. |
-| Alexa+ MCP bridge (AgentCore) | ✅ | Closest thing to real Alexa+ MCP; mind the long-lived session. |
+| Alexa+ MCP bridge (AgentCore) | ✅ | Closest thing to real Alexa+ MCP; mind the long-lived session — a new tool needs a runtime recreate to be seen. |
 | Web Speech API | ✅ (demo) | Honest, zero-dependency voice for the simulation. |

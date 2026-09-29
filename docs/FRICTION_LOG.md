@@ -320,10 +320,77 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
 
 ---
 
+### F18 — Interaction-model generation silently fell back to template utterances on a Bedrock daily-token cap
+- **Task:** After adding new MCP tools, regenerate the Alexa interaction model so
+  natural phrasings ("tell me about that session", "approve all the safe ones") map
+  to the new intents.
+- **Steps:** `npm run generate` (the bridge's generator scans `tools/list` and asks a
+  Bedrock model to invent varied sample utterances per tool), then inspected the
+  generated `en-US.json`.
+- **Expected:** Rich, human sample utterances per new intent, as we'd seen on earlier runs.
+- **Actual:** Every intent logged `template utterances used (Too many tokens per day,
+  please wait before trying again.)` — the generator hit a Bedrock **daily** token
+  quota and quietly degraded to generic templates like "describe session", "describe
+  session please". So `DescribeSessionIntent` had no "tell me about that session" and
+  `ApproveAllSafeIntent` had no "approve all the safe ones" — the exact natural phrases
+  a user actually says were missing, and voice recognition would miss them.
+- **Severity:** Medium (the tool ships, but is hard to invoke by natural voice; easy to
+  miss because generation "succeeded").
+- **Workaround:** Author the natural phrasings by hand in
+  `skill-package/overrides/<locale>.utterances.json` (keyed by intent name) — the
+  generator merges overrides locally with no model call, so it's immune to the token
+  cap. Re-ran `npm run generate`; the overrides landed (e.g. `DescribeSessionIntent`
+  went to 17 utterances) and the natural phrases were recognized live.
+- **Suggestion:** Fail loudly (non-zero exit or a prominent summary line) when the LLM
+  utterance step is skipped due to quota, so a degraded model isn't shipped silently;
+  and let the generator fall back to a cheaper model or cache prior utterances.
+
+### F19 — Read-only replies closed the voice session, breaking natural follow-ups
+- **Task:** Let a supervisor ask several things in a row by voice — "get status" then
+  "tell me about that session" then "which task failed" — without reopening the skill.
+- **Steps:** Each read-only tool (`get_status`, `check_task_health`, `describe_session`)
+  returned a plain informative sentence ("... the crew has two active sessions.").
+- **Expected:** The mic stays open so the next question reaches the skill.
+- **Actual:** The bridge decides `shouldEndSession` from whether the reply ends in "?"
+  (`endsWithQuestion`, see F15). A statement-ending reply closed the session, so the
+  follow-up ("tell me about that session") went to Alexa+ instead of the skill and
+  came back as a platform error ("having trouble accessing your skill"). Every question
+  needed a fresh "open kiro whisper" — the opposite of a fluid oversight conversation.
+- **Severity:** Medium (each read-only answer worked, but the conversation couldn't continue).
+- **Workaround:** A `keep_open()` helper appends a short "Anything else you'd like to
+  check?" to a read-only reply when it doesn't already end in a question (so replies
+  that already ask something, like the status digest's "Do you want to hear it?", are
+  untouched). Server-side text only — the tool list didn't change, so a server restart
+  sufficed (no runtime recreate, cf. F17). Verified live: status → describe → health ran
+  back-to-back in one open session.
+- **Suggestion:** Same as F15 — a first-class "expects a follow-up / keep the mic open"
+  flag on a tool result would be far more robust than inferring it from a trailing "?".
+
+### F20 — Two tools reported different session counts for the same crew
+- **Task:** Answer "how many sessions" consistently across tools, so a voice user isn't
+  told two different numbers seconds apart.
+- **Steps:** Asked "get status" (which read the Gateway's `/api/status` `sessions`
+  field) then "tell me about that session" and "which task failed" (which count slots
+  from `/api/chat/slots`).
+- **Expected:** One consistent count.
+- **Actual:** "get status" said "**one** active session" while the other two said
+  "**two** sessions total." Both were internally correct — `/api/status.sessions`
+  counts only currently-*running* sessions, while the slot list includes finished ones —
+  but to a user they simply contradict each other, which erodes trust in an oversight tool.
+- **Severity:** Low (each number is defensible; the inconsistency is the problem).
+- **Workaround:** `get_status` now counts the same real (non-empty) slots the other
+  tools use, so all three agree; it falls back to the Gateway's `sessions` number only
+  if the slot list can't be fetched. Verified live: "get status" and "tell me about that
+  session" both say two.
+- **Suggestion:** A single documented "session count" semantic (running vs. total, and
+  which endpoint is canonical) would prevent clients from mixing two sources.
+
+---
+
 ## Severity tally
 - High: F1, F2, F8, F11, F12, F13, F14, F15, F17
-- Medium: F3, F4, F5, F7, F9, F10
-- Low: F6, F16
+- Medium: F3, F4, F5, F7, F9, F10, F18, F19
+- Low: F6, F16, F20
 
 Most frictions were about **discovery** (how to talk to the Gateway, which action
 string, where the pending approval lives) rather than capability gaps — the
@@ -346,4 +413,11 @@ warm agent session caches `tools/list` once and the hosting container outlived e
 redeploy — the fix was to recreate the runtime so a cold container re-lists the tools.
 It reinforced the same theme from the other direction: the long-lived, model-driven
 session is the hard part, and "deployed" at the server does not mean "visible" to the
-agent until that session is actually torn down.
+agent until that session is actually torn down. F18–F20 came from a second round of
+adding voice tools (`explain_top`, `check_task_health`, `describe_session`) and are the
+"last mile" of shipping a voice feature: the intent must be *generatable* into the model
+(F18 — a silent quota fallback dropped the natural phrasings), the reply must *keep the
+conversation open* (F19 — statement-ending replies closed the session), and multiple
+tools must *agree on the facts* (F20 — two session counts from two endpoints). None were
+capability gaps; each was a seam between the deterministic server and the model-driven
+voice surface, and each fix pushed correctness back to the source.
