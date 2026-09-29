@@ -41,6 +41,13 @@ and `kirocrew token` gives a clean way to authenticate a local client.
   never auto-approve on an unverified flag — an unclear signal just gets surfaced. A
   more consistently populated read-only/side-effect flag would let clients auto-clear
   more safe steps with confidence.
+- **Crew's agent refuses the most dangerous commands itself, upstream of approvals.**
+  When we asked Crew to run `mkfs …` or `curl … | sh`, its own model declined and no
+  approval was ever raised — so an oversight client never gets a chance to block-and-log
+  them. Great safety by default, but it means the "auto-block" path a supervisor can
+  observe only covers commands Crew is willing to attempt. A mode that routes a
+  policy-violating command to the approval channel (rather than an invisible refusal)
+  would let an external guardrail own and record that decision (see Friction Log F16).
 
 **Onboarding (zero to hello world).** Installing and launching Crew was smooth. Going
 from "it's running" to "my code can drive it" was the hard part — mostly the auth

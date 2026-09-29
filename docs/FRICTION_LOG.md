@@ -251,10 +251,36 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
 
 ---
 
+### F16 — Crew's own agent refuses catastrophic commands before they reach an approval
+- **Task:** Exercise KiroWhisper's AUTO_BLOCK bucket end to end — have Crew attempt a
+  catastrophic shell command and watch our deny rule reject it silently.
+- **Steps:** Sent slots asking Crew to run `mkfs.ext4 …` and `curl … | sh`, then
+  watched the Gateway for the approval and our audit log for an auto-block.
+- **Expected:** Crew raises an approval for the dangerous command; KiroWhisper's
+  `is_catastrophic` rule auto-blocks it and records it, so "get status" can say
+  "I blocked one dangerous one."
+- **Actual:** The approval never appeared. Crew's own model declined to run the
+  command itself ("I won't run that — `mkfs.ext4` formats a filesystem…"), so nothing
+  was ever handed to KiroWhisper to block. The auto-block path is only reachable for
+  commands Crew is willing to attempt but that match our rules — a narrower set than
+  expected. Merely-risky commands (e.g. a scoped `rm -rf /tmp/x`) *do* come through and
+  are surfaced correctly.
+- **Severity:** Low (it's good, layered safety — Crew refuses the worst, we catch the
+  rest — but it means a demo rarely shows a non-zero "blocked" count).
+- **Workaround:** Keep `is_catastrophic` as a real, tested defense-in-depth layer, but
+  don't headline a "blocked N dangerous ops" number in the demo; lead with the
+  auto-pass and surface behaviors, which fire reliably. Documented the layering in the
+  README so the block bucket isn't oversold.
+- **Suggestion:** A Crew setting to route a policy-violating command to the approval
+  channel (instead of the model refusing outright) would let an oversight tool own the
+  block decision and log it, rather than the refusal happening invisibly upstream.
+
+---
+
 ## Severity tally
 - High: F1, F2, F8, F11, F12, F13, F14, F15
 - Medium: F3, F4, F5, F7, F9, F10
-- Low: F6
+- Low: F6, F16
 
 Most frictions were about **discovery** (how to talk to the Gateway, which action
 string, where the pending approval lives) rather than capability gaps — the
@@ -269,4 +295,6 @@ the platform answering instead of the skill (F13), and schema-vs-plain-text outp
 (F14) only appeared once real speech drove a real agent. Each pushed a concrete fix,
 and the recurring lesson was the same: never trust the spoken reply as proof — verify
 the real effect at the source, and keep the safety-critical logic deterministic rather
-than dependent on how the model phrases a turn.
+than dependent on how the model phrases a turn. F16 is a different, welcome kind of
+friction: Crew's own agent already refuses the most catastrophic commands, so our
+auto-block layer is defense-in-depth we don't oversell rather than the star of the demo.

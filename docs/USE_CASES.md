@@ -51,16 +51,24 @@ blind developer this makes voice approval UNUSABLE.
 ## Solution — three buckets
 KiroWhisper does not talk constantly. It waits quietly in the background, sees ALL
 of Crew's approval requests (`GET /api/approvals`), classifies each by risk, and:
-1. **Silently pass (low risk):** read files, tests, reversible edits -> auto-approve
-   (`action:"approved"`), don't disturb the user.
-2. **Silently block/hold (obvious danger):** `rm -rf`, prod push, secret logging ->
-   auto-stop (`action:"rejected"` or hold), summarize "I blocked this" later.
+1. **Silently pass (rule-certain low risk):** read/list/search operations, once the
+   user has trusted the session -> auto-approve (`action:"approved"`), don't disturb
+   the user. This is the bucket that fires most in practice.
+2. **Silently block (catastrophic only):** a narrow, tested deny list — `rm -rf /`,
+   `curl … | sh`, `mkfs`, `dd of=/dev/…`, fork bomb -> auto-reject. **In practice this
+   rarely fires: Crew's own agent already refuses the worst commands before they ever
+   reach an approval (see Friction Log F16), so this is defense-in-depth, not the
+   headline.** Merely-risky commands (e.g. a scoped `rm -rf /tmp/x`) are NOT blocked;
+   they are surfaced.
 3. **Surface to the user (real decision):** irreversible but possibly legitimate,
-   requires intent -> ONLY these come by voice.
+   requires intent -> ONLY these come by voice, highest risk first, read aloud.
 
-Then, when the user asks, a summary:
-> "In the last 2 hours Crew did 23 steps. I passed 19 as safe, blocked 3 dangerous
-> ones, and 1 is waiting for you: it deletes auth.js, irreversible, I wasn't sure."
+Then, when the user asks, a "while you were away" summary (`get_status`):
+> "Since you last checked, Crew asked for two approvals. I passed one as safe. Crew
+> has two active sessions, and one decision is waiting for you: it deletes
+> old_notes.txt, which is irreversible. Do you want to hear it?"
+
+(This exact shape was verified live on Alexa against the real backend.)
 
 ## Why it is creative (not a wrapper)
 Crew hands over all approvals equally. The intelligence is in OUR layer:
@@ -69,11 +77,18 @@ Crew hands over all approvals equally. The intelligence is in OUR layer:
 - Decide: pass / block / surface.
 - Accumulate and summarize: turn noise into signal.
 
-## Safety principle (critical)
+## Safety principle (critical) — defense-in-depth, verified in code
+- **Deterministic rules first, model only for the ambiguous.** Rules flag danger and
+  clear read-only; Bedrock is consulted only when rules are inconclusive and returns
+  UNKNOWN (never LOW) on any doubt.
 - CONSERVATIVE filter: if unsure, ALWAYS surface to the user (safe default; same
   spirit as Crew's "deny on silence").
-- The user can ALWAYS see what was passed ("I passed 19, want to hear them?").
-- Nothing destructive passes silently — only clearly low-risk/reversible items.
+- **Trust never becomes a hole:** session trust auto-approves LOW only when a *rule*
+  is certain (read-only); a model-guessed LOW is still surfaced even under trust.
+  *(Verified live: a file-read Crew didn't flag read-only was NOT auto-approved.)*
+- **Every voice approval takes two confirmations:** the first "approve" only asks
+  "are you sure?"; the action applies only on an explicit second confirmation.
+- The user can ALWAYS hear what happened ("Since you last checked… I passed one as safe").
 - Every decision is logged (audit; responsible AI).
 
 ## Spike-reality: PROVEN ✅
@@ -93,22 +108,25 @@ Crew hands over all approvals equally. The intelligence is in OUR layer:
 > These are the infrastructure of the "colleague" experience. Necessary but NOT a
 > difference on their own. Ambient Awareness runs on top of them.
 
-## UC-1 — Ask status (PULL / summary)
-- **Actor:** Deniz. **Trigger:** "Kiro, what's up?"
-- **Flow:** The system fetches Crew's state + pending approvals and produces a
-  voice-friendly summary. "It has one thing: waiting for your approval to delete
-  the old login in auth.js. Nothing else pending."
-- **Spike:** ✅ `GET /api/status` + `GET /api/approvals`. Summary via Bedrock.
+## UC-1 — Ask status (PULL / "while you were away" digest)
+- **Actor:** Deniz. **Trigger:** "get status" / "what did I miss?"
+- **Flow:** The system reports what happened since the last check: what Crew asked
+  for, what it passed/blocked automatically, what the user decided, how many are
+  still waiting. Ends with a question so the voice session stays open.
+- **Status:** ✅ Built and **verified live on Alexa** (`get_status` tool +
+  audit digest + persisted checkpoint). Matched the backend exactly.
 - **Priority:** CORE
 
-## UC-2 — Approve (high risk -> double-confirm)
-- **Actor:** Deniz. **Trigger:** "Approve."
-- **Flow:** If destructive/irreversible, the system re-confirms intent ("this
-  deletes 42 lines, irreversible, are you sure?") -> clear "yes" -> approve.
-- **Spike:** ✅ `POST /api/chat/slots/<slot>/approve {action:"approved", request_id}`
-  -> `{"ok":true}`, the file ACTUALLY changed. Risk data: is_shell/is_read_only/diff.
+## UC-2 — Approve (always two-step confirm by voice)
+- **Actor:** Deniz. **Trigger:** "approve it."
+- **Flow:** The decision is read aloud first; the first "approve" only asks "are you
+  sure?"; an explicit second confirmation applies it. Applies to every decision, not
+  just high-risk, so a stray "yes" can never act on its own.
+- **Status:** ✅ Built and **verified live on Alexa**: the target file was deleted only
+  after the second confirmation; the backend showed the resolve.
 - **Priority:** CORE
-- **GOTCHA:** action="approved" (past tense!) — "approve" silently falls to rejected.
+- **GOTCHA:** action="approved" (past tense!) — "approve" silently falls to rejected;
+  we also verify the approval's real resolved state instead of trusting `{"ok":true}`.
 
 ## UC-3 — Reject -> sub-options
 - **Actor:** Deniz. **Trigger:** "No."
@@ -126,15 +144,18 @@ Crew hands over all approvals equally. The intelligence is in OUR layer:
 - **Spike:** ✅ `GET /api/spawn/<id>` -> done, turns, result messages.
 - **Priority:** CORE
 
-## UC-5 — The colleague calls you (PUSH / proactive) ⭐
-- **Actor:** system->Deniz. **Trigger:** a new approval/event appeared, the user is not at the screen.
+## UC-5 — The colleague calls you (PUSH / proactive)
+- **Actor:** system->Deniz. **Trigger:** a new real decision passed the filter.
 - **Flow:** The system speaks up on its own: "KiroWhisper: I need your approval on
-  task 3." (music ducks / light / short alert) -> user "what is it?" -> flow.
-- **Spike/rules:** ⚠️ WILL BE STAGED (Emerson: legitimate in simulation). Technical
-  basis: background `GET /api/approvals` POLLING -> trigger spoken alert on a new
-  approval. The data is real; the "speaking on its own" is staged.
-- **Priority:** CORE (the soul) — but with Ambient Awareness: only the "real
-  decision" that passes the filter is surfaced proactively, not the noise.
+  task 3." -> user "what is it?" -> flow.
+- **Reality check (important):** On the real Alexa+ path this is **not possible today**
+  — MCP is request/response and Alexa+ has no proactive channel for add-ons (see
+  Friction Log F7). We implemented it only in the web dev console (Ambient's
+  `on_surface` -> SSE -> spoken alert). Because the dev console runs on the same
+  machine where Crew already sends notifications, we **do not headline this** in the
+  submission; the product is the pull model (UC-1) on Alexa.
+- **Priority:** FUTURE (needs an Alexa+ proactive channel) — kept as a design point,
+  not a demo claim.
 
 ## UC-6 — "Always approve from now on" (trust / session trust)
 - **Actor:** Deniz. **Trigger:** "For this task, always approve."
@@ -171,10 +192,12 @@ Crew hands over all approvals equally. The intelligence is in OUR layer:
 - **Priority:** DIFFERENTIATOR
 
 ## UC-11 — Safe decision record (audit)
-- **Actor:** system. **Trigger:** every approve/reject/filter decision.
-- **Flow:** "Deniz rejected the delete approval at 08:16 / KiroWhisper blocked 3
-  dangerous operations" -> logged, summarizable on request.
-- **Spike:** ✅ decisions are produced in our layer; logging is our layer. (Crew also has security_events.)
+- **Actor:** system. **Trigger:** every approve/reject/auto-pass/auto-block decision.
+- **Flow:** each decision is appended to an audit log (timestamp, request id, risk,
+  action, who decided), secrets masked. This is the source of the "while you were away"
+  digest (UC-1) and the human-in-the-loop delivery guarantee — e.g. "you rejected the
+  delete at 08:16; I passed two reads as safe."
+- **Status:** ✅ Built and used live by `get_status`; logging is entirely our layer.
 - **Priority:** DIFFERENTIATOR (responsible-AI points; the HITL "delivery guarantee" principle)
 
 ## UC-12 — Failure notification
@@ -194,17 +217,26 @@ Crew hands over all approvals equally. The intelligence is in OUR layer:
 ---
 
 # Scope summary (requirement priority)
-- **CORE (must-have):** Ambient Awareness + UC-1,2,3,4,5,12
-- **DIFFERENTIATOR (once core works):** UC-6,7,9,10,11
-- **FUTURE (v2, "future work" in submission):** UC-8, voice-starting new tasks
+- **CORE (built + verified live on Alexa):** Ambient Awareness + UC-1 (status digest),
+  UC-2 (approve with two-step confirmation), UC-3 (reject), UC-6 (session trust,
+  rule-certain only).
+- **DIFFERENTIATOR:** UC-7, UC-9, UC-10, UC-11 (audit).
+- **FUTURE (v2, "future work" in submission):** UC-5 (needs an Alexa+ proactive
+  channel), UC-8 (mid-task redirect), UC-12 (failure push), voice-starting new tasks.
 
-# Demo storyline (from these use cases)
-1. HOOK (0-30s): the maker's own pain (3 projects, constant approvals, the fatigue
-   of turning back to the screen).
-2. AMBIENT AWARENESS (30-100s): Crew works autonomously, KiroWhisper filters
-   silently; surfaces only 1 real decision by voice (UC-5->UC-1->UC-2 double-confirm).
-   "I passed 19."
-3. DEPTH (100-150s): how risk classification + safe approval work (Bedrock).
+# Demo storyline (Alexa-first; verified flows only)
+The product surface is the Alexa skill over our self-hosted MCP server (via the
+`alexa-skill-mcp-bridge` + AgentCore). The web console is a dev tool, not shown as
+the product.
+1. HOOK (0-30s): the maker's own pain — an autonomous Crew, dozens of approvals, the
+   fatigue of turning back to the screen; for a blind developer, unusable by voice.
+2. AMBIENT AWARENESS (30-110s): on a real Echo / the Alexa console — "Alexa, open
+   kiro whisper" -> "get status" (the "while you were away" digest: *asked for two,
+   I passed one as safe, one is waiting*) -> "what needs my decision" reads the
+   decision aloud -> "approve it" -> **two-step confirmation** -> "yes" -> applied.
+   All of this was verified live against the real backend.
+3. DEPTH (110-150s): defense-in-depth — deterministic rules first, Bedrock for the
+   ambiguous, trust that never auto-approves a guess, two-step confirm on every action.
 4. CURB-CUT (150-180s): "a comfort for me; for a blind developer, being able to
    oversee an autonomous agent without any dependence on a screen — because voice
    alone cannot be scanned, and without a filter it is unusable."
