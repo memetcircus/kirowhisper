@@ -228,3 +228,29 @@ to a dedicated STT/TTS (or Crew's built-in Piper/Transcribe voice).
 | MCP Python SDK | ✅ | Streamable HTTP is easy; pick stateless mode behind a tunnel. |
 | Alexa+ MCP bridge (AgentCore) | ✅ | Closest thing to real Alexa+ MCP; mind the long-lived session — a new tool needs a runtime recreate to be seen. |
 | Web Speech API | ✅ (demo) | Honest, zero-dependency voice for the simulation. |
+
+---
+
+## Feature Requests
+
+Format per rules: description · why it matters to our project · priority.
+
+### FR1 — Expose per-account credit/quota and cumulative token usage via the Gateway API
+- **Description.** The Kiro IDE already shows a running credit balance (e.g. "Kiro Pro
+  Max 3969.59 / 5850") and a per-session "Est. Credits Used". The Gateway REST API does
+  not expose this: `/api/status.stats` reports token counters that stayed at `0` in our
+  runs, and `/api/credits`, `/api/billing`, `/api/quota` all 404. `/api/usage` returns
+  activity (sessions / messages / tool calls, with a daily history) but no credits,
+  tokens, or budget. Please surface the same credit/quota and cumulative token figures
+  the IDE displays through the Gateway (e.g. on `/api/usage` or a new `/api/credits`).
+- **Why it matters to us.** KiroWhisper is eyes-free voice oversight of an autonomous
+  Crew. "How much budget is left?" and "how much have we spent today?" are natural
+  oversight questions — and for a blind developer they are *unanswerable* today, because
+  the only source is a visual bar in the IDE they cannot see. With the data on the
+  Gateway we could answer "about 1,880 credits left" by voice; without it we honestly
+  cannot, so we left the feature out rather than fabricate a number. (We can already
+  read per-session `context_used_tokens`/`context_window_tokens` from a slot, which is
+  useful, but that is context fill, not spend or remaining budget.)
+- **Priority.** Important. (Not Critical — the decision/approval core works without it —
+  but it's the clearest accessibility gap we hit: information the sighted see on screen
+  that a voice user simply cannot reach.)
