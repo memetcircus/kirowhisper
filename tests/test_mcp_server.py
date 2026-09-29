@@ -12,7 +12,13 @@ from kirowhisper.ambient import AmbientEngine
 from kirowhisper.audit import AuditLog
 from kirowhisper.config import AmbientConfig, BedrockConfig, Config
 from kirowhisper.mcp_server import KiroWhisperServices, build_server
-from kirowhisper.models import Approval, PendingDecision, RiskAssessment, RiskLevel
+from kirowhisper.models import (
+    Approval,
+    DecisionAction,
+    PendingDecision,
+    RiskAssessment,
+    RiskLevel,
+)
 from kirowhisper.risk import RiskClassifier
 from kirowhisper.summarizer import Summarizer
 
@@ -147,6 +153,33 @@ async def test_get_status_includes_ambient_and_sessions(tmp_path: Path):
     server = build_server(svc)
     out = await _call(server, "get_status")
     assert "session" in out.lower()
+
+
+async def test_get_status_is_a_while_you_were_away_digest(tmp_path: Path):
+    svc, _, ambient = _services(tmp_path)
+    server = build_server(svc)
+
+    # First-ever check: the window is "since I started watching".
+    first = await _call(server, "get_status")
+    assert "since i started watching" in first.lower()
+
+    # Things happen while the user is away: one auto-blocked, one user rejection,
+    # one still waiting.
+    svc.audit.record("b1", RiskLevel.HIGH, DecisionAction.AUTO_BLOCK, "explicit deny rule")
+    svc.audit.record("u1", RiskLevel.HIGH, DecisionAction.SURFACE)
+    svc.audit.record("u1", RiskLevel.HIGH, DecisionAction.AUTO_BLOCK, "user rejected", by="user")
+    _surface(ambient, "w1", RiskLevel.HIGH)
+    svc.audit.record("w1", RiskLevel.HIGH, DecisionAction.SURFACE)
+
+    second = await _call(server, "get_status")
+    assert second.startswith("Since you last checked, Crew asked for 3 approvals.")
+    assert "blocked 1 dangerous one" in second
+    assert "You rejected 1." in second
+    assert second.rstrip().endswith("Do you want to hear it?")  # keeps the mic open
+
+    # Nothing new since that check.
+    third = await _call(server, "get_status")
+    assert third.startswith("Nothing new since you last checked.")
 
 
 # ---- approve_top / reject_top (the Alexa-reliable, no-elicitation path) ------

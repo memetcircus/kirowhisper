@@ -119,6 +119,53 @@ class Summarizer:
             return tail[0].upper() + tail[1:] + "."
         return "No decisions to report."
 
+    def status_digest(
+        self,
+        *,
+        raised: int,
+        auto_passed: int,
+        auto_blocked: int,
+        you_approved: int,
+        you_rejected: int,
+        waiting: int,
+        sessions: int | None,
+        first_check: bool,
+    ) -> str:
+        """Spoken "while you were away" status: what Crew asked, what I handled for
+        you, what you decided, and what is still waiting (asked last, as a question,
+        so the voice session stays open for the answer)."""
+        since = "since I started watching" if first_check else "since you last checked"
+        out: list[str] = []
+        if raised:
+            noun = "approval" if raised == 1 else "approvals"
+            out.append(f"{since[0].upper()}{since[1:]}, Crew asked for {raised} {noun}.")
+            handled = []
+            if auto_passed:
+                handled.append(f"passed {auto_passed} as safe")
+            if auto_blocked:
+                ones = "one" if auto_blocked == 1 else "ones"
+                handled.append(f"blocked {auto_blocked} dangerous {ones}")
+            if handled:
+                out.append("I " + _join_spoken(handled) + ".")
+        else:
+            out.append(f"Nothing new {since}.")
+        yours = []
+        if you_approved:
+            yours.append(f"approved {you_approved}")
+        if you_rejected:
+            yours.append(f"rejected {you_rejected}")
+        if yours:
+            out.append("You " + _join_spoken(yours) + ".")
+        if sessions is not None:
+            out.append(f"Crew has {sessions} active session{'' if sessions == 1 else 's'}.")
+        if waiting:
+            if waiting == 1:
+                out.append("1 decision is waiting for you. Do you want to hear it?")
+            else:
+                out.append(f"{waiting} decisions are waiting for you. "
+                           "Do you want to hear the most important one?")
+        return " ".join(out)
+
 
 # ── helpers ──
 

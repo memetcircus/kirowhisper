@@ -61,3 +61,37 @@ def test_audit_read_skips_malformed_lines(tmp_path: Path):
     entries = log.read_all()
     assert len(entries) == 1
     assert entries[0].approval_id == "ok"
+
+
+def test_digest_counts_each_approval_once_and_splits_user_from_system(tmp_path: Path):
+    log = AuditLog(path=tmp_path / "a.jsonl")
+    # r1: surfaced, then the user approved it
+    log.record("r1", RiskLevel.HIGH, DecisionAction.SURFACE)
+    log.record("r1", RiskLevel.HIGH, DecisionAction.AUTO_APPROVE, "user approved", by="user")
+    # r2: surfaced, then cleared automatically when trust was granted
+    log.record("r2", RiskLevel.LOW, DecisionAction.SURFACE)
+    log.record("r2", RiskLevel.LOW, DecisionAction.AUTO_APPROVE, "trust granted mid-session")
+    # r3: blocked automatically; r4: surfaced and rejected by the user
+    log.record("r3", RiskLevel.HIGH, DecisionAction.AUTO_BLOCK, "explicit deny rule")
+    log.record("r4", RiskLevel.HIGH, DecisionAction.SURFACE)
+    log.record("r4", RiskLevel.HIGH, DecisionAction.AUTO_BLOCK, "user rejected", by="user")
+
+    d = log.digest_since(0)
+    assert (d.raised, d.auto_passed, d.auto_blocked) == (4, 1, 1)
+    assert (d.you_approved, d.you_rejected) == (1, 1)
+
+
+def test_digest_respects_the_window(tmp_path: Path):
+    log = AuditLog(path=tmp_path / "a.jsonl")
+    log.record("old", RiskLevel.HIGH, DecisionAction.SURFACE)
+    cut = log.read_all()[-1].ts + 0.001
+    assert log.digest_since(cut).raised == 0
+
+
+def test_status_checkpoint_roundtrip(tmp_path: Path):
+    log = AuditLog(path=tmp_path / "a.jsonl")
+    assert log.last_status_check() is None
+    log.mark_status_check(123.5)
+    assert log.last_status_check() == 123.5
+    # survives a new AuditLog instance on the same file (i.e. a restart)
+    assert AuditLog(path=tmp_path / "a.jsonl").last_status_check() == 123.5

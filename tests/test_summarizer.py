@@ -92,3 +92,23 @@ def test_ambient_summary_phrasing():
     only3 = s.ambient_summary(auto_passed=0, blocked=0, surfaced=3)
     assert only3 == "3 decisions are waiting for you."
     assert s.ambient_summary(auto_passed=0, blocked=0, surfaced=0) == "No decisions to report."
+
+
+def test_status_digest_while_you_were_away():
+    s = Summarizer(BedrockConfig())
+    out = s.status_digest(raised=4, auto_passed=2, auto_blocked=1, you_approved=0,
+                          you_rejected=0, waiting=1, sessions=3, first_check=False)
+    assert out == (
+        "Since you last checked, Crew asked for 4 approvals. "
+        "I passed 2 as safe and blocked 1 dangerous one. "
+        "Crew has 3 active sessions. "
+        "1 decision is waiting for you. Do you want to hear it?"
+    )
+
+
+def test_status_digest_reports_user_decisions_and_first_check():
+    s = Summarizer(BedrockConfig())
+    out = s.status_digest(raised=0, auto_passed=0, auto_blocked=0, you_approved=1,
+                          you_rejected=2, waiting=0, sessions=1, first_check=True)
+    assert out == ("Nothing new since I started watching. You approved 1 and rejected 2. "
+                   "Crew has 1 active session.")

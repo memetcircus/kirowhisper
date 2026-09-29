@@ -78,21 +78,38 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         for rid in stale:
             pending_confirmations.pop(rid, None)
 
-    @mcp.tool(description="Spoken overall status: what Crew is doing and what Ambient handled.")
+    @mcp.tool(
+        description=(
+            "Spoken status for 'get status', 'how is the crew doing', 'what did I miss': "
+            "what Crew asked for since the user last checked, what was passed or "
+            "blocked automatically, what the user decided, and how many decisions are "
+            "still waiting. Read-only. Speak the result as given."
+        ),
+        structured_output=False,
+    )
     async def get_status() -> str:
-        snap = svc.ambient.snapshot()
+        # "While you were away": the window starts at the user's last status check
+        # (persisted next to the audit log, so it survives restarts), or at process
+        # start for a first-ever check.
+        checkpoint = svc.audit.last_status_check()
+        first_check = checkpoint is None
+        digest = svc.audit.digest_since(svc.audit.started_at if first_check else checkpoint)
         try:
             gw_status = await svc.gateway.get_status()
         except GatewayError:
             gw_status = {}
-        ambient_line = svc.summarizer.ambient_summary(
-            auto_passed=snap.get(DecisionAction.AUTO_APPROVE.value, 0),
-            blocked=snap.get(DecisionAction.AUTO_BLOCK.value, 0),
-            surfaced=snap.get("pending", 0),
+        speech = svc.summarizer.status_digest(
+            raised=digest.raised,
+            auto_passed=digest.auto_passed,
+            auto_blocked=digest.auto_blocked,
+            you_approved=digest.you_approved,
+            you_rejected=digest.you_rejected,
+            waiting=len(svc.ambient.pending_decisions()),
+            sessions=gw_status.get("sessions"),
+            first_check=first_check,
         )
-        sessions = gw_status.get("sessions")
-        tail = f" Crew has {sessions} active session(s)." if sessions is not None else ""
-        return ambient_line + tail
+        svc.audit.mark_status_check()
+        return speech
 
     @mcp.tool(
         description=(

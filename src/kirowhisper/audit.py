@@ -64,11 +64,24 @@ class AuditEntry:
         return json.dumps(d, ensure_ascii=False)
 
 
+@dataclass(frozen=True)
+class Digest:
+    """What happened in a time window, for the spoken status ("while you were away")."""
+
+    raised: int         # distinct approvals Crew asked for
+    auto_passed: int    # passed silently as safe (session trust, rule-certain LOW)
+    auto_blocked: int   # blocked silently by a catastrophic-operation rule
+    you_approved: int   # approved by the user
+    you_rejected: int   # rejected by the user
+
+
 @dataclass
 class AuditLog:
     """Append-only audit log backed by a JSONL file."""
 
     path: Path = field(default_factory=lambda: _default_path())
+    # When this process started watching; the digest window for a first-ever check.
+    started_at: float = field(default_factory=time.time)
 
     def __post_init__(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,6 +137,53 @@ class AuditLog:
             if e.ts >= since_ts:
                 counts[str(e.action)] = counts.get(str(e.action), 0) + 1
         return counts
+
+
+    def digest_since(self, since_ts: float) -> Digest:
+        """Summarize the audit log from ``since_ts`` on, counting each approval once.
+
+        System entries are Ambient's own handling (every approval it saw gets one:
+        surfaced, auto-passed or auto-blocked); user entries are voice decisions.
+        Counting distinct approval ids keeps a surfaced-then-trusted step from being
+        counted twice.
+        """
+        raised: set[str] = set()
+        passed: set[str] = set()
+        blocked: set[str] = set()
+        approved: set[str] = set()
+        rejected: set[str] = set()
+        for e in self.read_all():
+            if e.ts < since_ts:
+                continue
+            if e.by == "user":
+                if e.action == DecisionAction.AUTO_APPROVE:
+                    approved.add(e.approval_id)
+                elif e.action == DecisionAction.AUTO_BLOCK:
+                    rejected.add(e.approval_id)
+                continue
+            raised.add(e.approval_id)
+            if e.action == DecisionAction.AUTO_APPROVE:
+                passed.add(e.approval_id)
+            elif e.action == DecisionAction.AUTO_BLOCK:
+                blocked.add(e.approval_id)
+        return Digest(len(raised), len(passed), len(blocked), len(approved), len(rejected))
+
+    # ── "since you last checked" checkpoint (persists across restarts) ──
+
+    @property
+    def _checkpoint_path(self) -> Path:
+        return self.path.with_suffix(".checkpoint")
+
+    def last_status_check(self) -> float | None:
+        """When the user last heard a status, or None if they never have."""
+        try:
+            return float(self._checkpoint_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+
+    def mark_status_check(self, ts: float | None = None) -> None:
+        self._checkpoint_path.write_text(str(ts if ts is not None else time.time()),
+                                         encoding="utf-8")
 
 
 def _default_path() -> Path:
