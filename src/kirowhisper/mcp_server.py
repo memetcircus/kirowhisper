@@ -5,6 +5,7 @@ server (spec 2025-11-25, Streamable HTTP) whose tools genuinely call the Crew
 Gateway + Ambient Awareness engine at runtime — not merely named in a README.
 
 Tools:
+  - help                  : spoken "what can you do" menu (eyes-free discoverability)
   - get_status            : overall status + ambient summary (passed/blocked/waiting)
   - check_task_health     : which task failed / how the running tasks are doing
   - describe_session      : what a session is working on and where it stands
@@ -57,8 +58,9 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         title="KiroWhisper",
         version="0.1.0",
         instructions=(
-            "Voice oversight for autonomous Kiro Crew. Ask get_status for a spoken "
-            "summary, get_pending_decisions for what needs you, then approve/reject."
+            "Voice oversight for autonomous Kiro Crew. New here? Call help for a spoken "
+            "menu. Ask get_status for a summary, get_pending_decisions for what needs "
+            "you, then approve/reject."
         ),
     )
     svc = services
@@ -93,6 +95,33 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         ]
         for rid in stale:
             pending_confirmations.pop(rid, None)
+
+    @mcp.tool(
+        description=(
+            "Explain what KiroWhisper can do, in spoken form: call this for 'what can "
+            "you do', 'help', 'what can I say', 'what are my options', 'how does this "
+            "work'. Reads a short, grouped list of capabilities with example phrases. "
+            "Read-only. Speak the result as given. This is the eyes-free menu: a voice "
+            "user can't see the tools on a screen, so this is how they discover them."
+        ),
+        structured_output=False,
+    )
+    async def help() -> str:
+        # Deterministic, grouped, and short — never read 12 tools one by one. Groups
+        # map to how a supervisor thinks: check in, hear a decision, act on it, dig in.
+        # Ends with a question so the mic stays open to actually try one.
+        return (
+            "I'm your voice link to the Kiro Crew, so you can oversee it without "
+            "looking at a screen. Four things you can do. "
+            "One, check in: say 'get status' for what happened while you were away, "
+            "or 'which task failed' to hear how the tasks are doing. "
+            "Two, hear what needs you: say 'what needs my decision' and I'll read the "
+            "most important one, with 'why is that risky' if you want the reason. "
+            "Three, act on it: say 'approve it' or 'reject it' — approvals always take "
+            "a second yes, so nothing risky happens by accident. "
+            "Four, dig in: say 'tell me about that session' to hear what a task is "
+            "working on. What would you like to start with?"
+        )
 
     @mcp.tool(
         description=(

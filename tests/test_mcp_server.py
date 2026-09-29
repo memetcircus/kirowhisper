@@ -167,6 +167,21 @@ async def test_check_task_health_names_the_failed_task(tmp_path: Path):
     assert "1 still running" in out
 
 
+async def test_help_lists_capabilities_and_keeps_mic_open(tmp_path: Path):
+    # The eyes-free menu: a voice user can't see the tools, so help must name the
+    # main things to say and end on a question so they can try one immediately.
+    svc, _, _ = _services(tmp_path)
+    server = build_server(svc)
+    out = await _call(server, "help")
+    low = out.lower()
+    assert "get status" in low
+    assert "what needs my decision" in low
+    assert "approve it" in low and "reject it" in low
+    assert "why is that risky" in low
+    assert "tell me about that session" in low
+    assert out.rstrip().endswith("?")   # keeps the mic open to try one
+
+
 async def test_read_only_replies_keep_the_mic_open(tmp_path: Path):
     # get_status / check_task_health / describe_session must end in a question so
     # the Alexa bridge keeps the session open for a follow-up (endsWithQuestion).
