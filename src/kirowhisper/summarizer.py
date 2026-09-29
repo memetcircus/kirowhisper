@@ -9,6 +9,8 @@ masked, at most 2-3 options.
 
 from __future__ import annotations
 
+import re
+
 from .audit import mask_secrets
 from .config import BedrockConfig
 from .models import Approval, RiskAssessment, RiskLevel
@@ -137,6 +139,62 @@ class Summarizer:
 
         return _clip(f"{body} {reject}", max_words=60)
 
+    # ── task health ("which one failed?" / "how are my tasks doing?") ──
+
+    def task_health(self, slots: list[dict]) -> str:
+        """Spoken answer to 'which task failed?' / 'how are my tasks doing?'.
+
+        ``slots`` are the structured summaries from
+        ``GatewayClient.list_slot_summaries`` (title, running, awaiting_approval,
+        last_message). Crew gives no structured failure field, so each task's
+        health is inferred from its last assistant message. We are deliberately
+        honest in the wording: a task that mentions an error is described as
+        having "reported a problem", not asserted as definitively broken.
+
+        Troubled tasks are named FIRST (that is the question being asked), then a
+        one-line roll-up of the rest.
+        """
+        if not slots:
+            return "There are no active sessions right now."
+
+        troubled: list[str] = []
+        running: list[str] = []
+        waiting: list[str] = []
+        healthy = 0
+        for s in slots:
+            title = _short_title(str(s.get("title") or s.get("slot") or "a task"))
+            if s.get("awaiting_approval"):
+                waiting.append(title)
+            elif s.get("running"):
+                running.append(title)
+            elif _looks_troubled(str(s.get("last_message") or "")):
+                # Attach a short, masked reason drawn from the task's own words.
+                reason = _trouble_reason(str(s.get("last_message") or ""))
+                troubled.append(f"{title}" + (f" — {reason}" if reason else ""))
+            else:
+                healthy += 1
+
+        parts: list[str] = []
+        if troubled:
+            noun = "task" if len(troubled) == 1 else "tasks"
+            parts.append(
+                f"{len(troubled)} {noun} reported a problem: "
+                + _join_spoken(troubled) + "."
+            )
+        else:
+            parts.append("Nothing has reported a failure.")
+
+        roll: list[str] = []
+        if running:
+            roll.append(f"{len(running)} still running")
+        if waiting:
+            roll.append(f"{len(waiting)} waiting for your approval")
+        if healthy:
+            roll.append(f"{healthy} finished cleanly")
+        if roll:
+            parts.append(_join_spoken(roll).capitalize() + ".")
+        return " ".join(parts)
+
     # ── status / ambient summary ──
 
     def status_summary(self, *, done: int, pending: int, failed: int = 0) -> str:
@@ -224,6 +282,88 @@ class Summarizer:
 
 
 # ── helpers ──
+
+# Words in a task's own final message that suggest it hit trouble. Deliberately
+# conservative: we only flag when the task itself reports difficulty, and we phrase
+# the result as "reported a problem", never assert a definitive failure.
+_TROUBLE_WORDS = (
+    "failed", "failure", "errored", "exception", "traceback",
+    "not found", "cannot", "can't", "could not", "couldn't", "unable",
+    "denied", "permission denied", "timed out", "timeout", "crash",
+    "non-zero", "abort", "fatal",
+    # "error" is handled specially below (skip "no errors"/"0 errors"); a bare
+    # "exit status"/"exit code" is NOT a trouble word — only a non-zero one is,
+    # matched by the regex in _EXIT_FAILURE.
+    "error",
+)
+# Words that flip a trouble-word into a non-event ("no errors", "without failure",
+# "zero failures", "0 errors", "doesn't exist" is intentionally still a trouble via
+# "not found"/"cannot" only, not here).
+_NEGATION_BEFORE = ("no ", "without", "zero", "0 ")
+
+# A non-zero exit means failure; "exit status 0" / "exit code 0" means success.
+_EXIT_FAILURE = re.compile(r"exit (?:status|code)\s*[:=]?\s*(\d+)")
+
+
+def _looks_troubled(message: str) -> bool:
+    if not message:
+        return False
+    low = message.lower()
+
+    # Explicit exit codes: non-zero => trouble; zero => a success signal, ignore.
+    for m in _EXIT_FAILURE.finditer(low):
+        if m.group(1) != "0":
+            return True
+
+    for word in _TROUBLE_WORDS:
+        idx = low.find(word)
+        if idx == -1:
+            continue
+        # Skip if negated just before ("no errors", "without failure", "0 errors").
+        prefix = low[max(0, idx - 10):idx]
+        if any(neg in prefix for neg in _NEGATION_BEFORE):
+            continue
+        return True
+    return False
+
+
+def _trouble_reason(message: str) -> str:
+    """A short, masked phrase from the task's own message explaining the trouble.
+
+    Prefers the first sentence that itself looks troubled; clipped to a few words
+    so the spoken answer stays short. Never echoes the whole log.
+    """
+    sentences = _split_sentences(message)
+    for sentence in sentences:
+        if _looks_troubled(sentence):
+            return _clip(mask_secrets(sentence.strip(" .:-")), max_words=12)
+    # Fall back to the first sentence if the match was only across the whole message.
+    if sentences:
+        return _clip(mask_secrets(sentences[0].strip(" .:-")), max_words=12)
+    return ""
+
+
+def _split_sentences(text: str) -> list[str]:
+    out: list[str] = []
+    buf = ""
+    for ch in text.replace("\n", " "):
+        buf += ch
+        if ch in ".!?":
+            if buf.strip():
+                out.append(buf.strip())
+            buf = ""
+    if buf.strip():
+        out.append(buf.strip())
+    return out
+
+
+def _short_title(title: str, max_words: int = 8) -> str:
+    title = title.strip().rstrip("…").strip()
+    words = title.split()
+    if len(words) <= max_words:
+        return title or "a task"
+    return " ".join(words[:max_words])
+
 
 def _clip(text: str, max_words: int = 28) -> str:
     words = text.split()

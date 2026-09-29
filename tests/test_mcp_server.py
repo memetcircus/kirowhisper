@@ -40,6 +40,15 @@ class FakeGateway:
     async def get_task_result(self, task_id):
         return {"done": True, "turns": 3}
 
+    async def list_slot_summaries(self):
+        return [
+            {"slot": "s1", "title": "Shell Command Test", "running": False,
+             "awaiting_approval": False,
+             "last_message": "As expected, it failed: command not found."},
+            {"slot": "s2", "title": "Build parser", "running": True,
+             "awaiting_approval": False, "last_message": "Working."},
+        ]
+
 
 def _services(tmp_path: Path):
     gw = FakeGateway()
@@ -146,6 +155,15 @@ async def test_trust_session_enables_trust(tmp_path: Path):
     server = build_server(svc)
     out = await _call(server, "trust_session")
     assert "trusted" in out.lower()
+
+
+async def test_check_task_health_names_the_failed_task(tmp_path: Path):
+    svc, _, _ = _services(tmp_path)
+    server = build_server(svc)
+    out = await _call(server, "check_task_health")
+    assert "reported a problem" in out.lower()
+    assert "Shell Command Test" in out
+    assert "1 still running" in out
 
 
 async def test_get_status_includes_ambient_and_sessions(tmp_path: Path):

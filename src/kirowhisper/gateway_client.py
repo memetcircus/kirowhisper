@@ -196,6 +196,38 @@ class GatewayClient:
                     return approval
         return None
 
+    async def get_slot_summary(self, slot: str) -> dict[str, Any]:
+        """Structured 'what is this session doing' snapshot for a health check.
+
+        Crew exposes NO structured per-slot failure field (verified live): a slot
+        that errored and one that succeeded both end at ``running=False`` with a
+        ``✅`` tool marker (the tool ran; whether the command inside it failed is
+        only stated in the assistant's final natural-language message, e.g.
+        "As expected, it failed: Exit status 127"). So the honest raw signal is:
+        the title, whether it is still running, and the last assistant message.
+        The interpretation ("did this hit trouble?") is left to the summarizer.
+        """
+        obj = await self.get_slot(slot)
+        messages = obj.get("messages", []) or []
+        last_assistant = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant":
+                last_assistant = str(msg.get("content", "")).strip()
+                break
+        awaiting = await self.get_slot_pending_approval(slot) is not None
+        return {
+            "slot": slot,
+            "title": str(obj.get("title") or slot),
+            "running": bool(obj.get("running")),
+            "stopping": bool(obj.get("stopping")),
+            "awaiting_approval": awaiting,
+            "last_message": last_assistant,
+        }
+
+    async def list_slot_summaries(self) -> list[dict[str, Any]]:
+        """A health snapshot of every active slot (title/running/last message)."""
+        return [await self.get_slot_summary(s) for s in await self.list_slots()]
+
     async def get_slot_approval_status(self, slot: str, request_id: str) -> str:
         """Return the exact permission's current state from the slot history.
 

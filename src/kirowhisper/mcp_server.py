@@ -6,6 +6,7 @@ Gateway + Ambient Awareness engine at runtime — not merely named in a README.
 
 Tools:
   - get_status            : overall status + ambient summary (passed/blocked/waiting)
+  - check_task_health     : which task failed / how the running tasks are doing
   - get_pending_decisions : the decisions Ambient surfaced, voice-friendly
   - explain_top           : why the top decision is risky + what rejecting it does
   - approve_top           : approve the highest-risk pending decision (no id needed)
@@ -112,6 +113,23 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         )
         svc.audit.mark_status_check()
         return speech
+
+    @mcp.tool(
+        description=(
+            "Report the health of the running tasks: call this for 'which task "
+            "failed', 'did anything break', 'how are my tasks doing', 'is anything "
+            "stuck'. Names any task that reported a problem first, then a roll-up of "
+            "what's still running, waiting, or finished. Read-only. Speak the result "
+            "as given."
+        ),
+        structured_output=False,
+    )
+    async def check_task_health() -> str:
+        try:
+            slots = await svc.gateway.list_slot_summaries()
+        except GatewayError as exc:
+            return f"I couldn't reach the crew to check task health: {exc}"
+        return svc.summarizer.task_health(slots)
 
     @mcp.tool(
         description=(

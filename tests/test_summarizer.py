@@ -117,6 +117,77 @@ def test_explain_masks_secrets():
     assert "***REDACTED***" in out
 
 
+def test_task_health_names_the_failed_task_first():
+    s = Summarizer(BedrockConfig())
+    slots = [
+        {"slot": "s1", "title": "Shell Command Test", "running": False,
+         "awaiting_approval": False,
+         "last_message": "As expected, it failed: Exit status 127, command not found."},
+        {"slot": "s2", "title": "Build the parser", "running": True,
+         "awaiting_approval": False, "last_message": "Working on it."},
+        {"slot": "s3", "title": "Write docs", "running": False,
+         "awaiting_approval": False, "last_message": "Done, all three files written."},
+    ]
+    out = s.task_health(slots)
+    assert "reported a problem" in out.lower()
+    assert "Shell Command Test" in out
+    assert "1 still running" in out
+    assert "1 finished cleanly" in out
+
+
+def test_task_health_none_troubled():
+    s = Summarizer(BedrockConfig())
+    slots = [
+        {"slot": "s1", "title": "T1", "running": False, "awaiting_approval": False,
+         "last_message": "All tests passed, no errors."},
+        {"slot": "s2", "title": "T2", "running": False, "awaiting_approval": True,
+         "last_message": "Ready for your approval."},
+    ]
+    out = s.task_health(slots)
+    assert "nothing has reported a failure" in out.lower()
+    assert "1 waiting for your approval" in out
+    assert "1 finished cleanly" in out
+
+
+def test_task_health_negation_is_not_a_failure():
+    # "no errors" / "without failure" must NOT be flagged as troubled.
+    s = Summarizer(BedrockConfig())
+    slots = [{"slot": "s1", "title": "Clean run", "running": False,
+              "awaiting_approval": False,
+              "last_message": "Finished with no errors and zero failures."}]
+    out = s.task_health(slots)
+    assert "reported a problem" not in out.lower()
+    assert "1 finished cleanly" in out
+
+
+def test_task_health_masks_secrets_in_reason():
+    s = Summarizer(BedrockConfig())
+    slots = [{"slot": "s1", "title": "Deploy", "running": False,
+              "awaiting_approval": False,
+              "last_message": "Error: auth failed using api_key=supersecret123 value."}]
+    out = s.task_health(slots)
+    assert "supersecret123" not in out
+    assert "reported a problem" in out.lower()
+
+
+def test_task_health_exit_status_zero_is_success_not_failure():
+    # A successful command reports "exit status 0" — this must NOT be flagged as a
+    # problem, while a non-zero exit must be. Regression for a live false positive.
+    s = Summarizer(BedrockConfig())
+    ok = [{"slot": "s1", "title": "Echo", "running": False, "awaiting_approval": False,
+           "last_message": "Output: hello (exit status 0, no stderr)."}]
+    assert "nothing has reported a failure" in s.task_health(ok).lower()
+
+    bad = [{"slot": "s1", "title": "Bad", "running": False, "awaiting_approval": False,
+            "last_message": "It ran but returned exit status 2."}]
+    assert "reported a problem" in s.task_health(bad).lower()
+
+
+def test_task_health_no_active_sessions():
+    s = Summarizer(BedrockConfig())
+    assert "no active sessions" in s.task_health([]).lower()
+
+
 def test_status_summary_phrasing():
     s = Summarizer(BedrockConfig())
     assert s.status_summary(done=2, pending=1) == "2 tasks done and 1 waiting for you."
