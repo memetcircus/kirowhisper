@@ -198,8 +198,10 @@ class AmbientEngine:
             if rid in self._pending:
                 continue  # resolve failed and was re-queued -> leave it surfaced
             self._counts[DecisionAction.AUTO_APPROVE.value] += 1
+            # by="system": the user granted trust, but this specific step was passed
+            # automatically, so it counts as "I passed it as safe" in the digest.
             self._audit.record(rid, pending.risk.level, DecisionAction.AUTO_APPROVE,
-                               "trust granted mid-session", by="user")
+                               "trust granted mid-session", by="system")
             cleared += 1
         return cleared
 

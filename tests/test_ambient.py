@@ -252,3 +252,18 @@ async def test_snapshot_counts(tmp_path: Path):
     snap = eng.snapshot()
     assert snap["surface"] == 3
     assert snap["pending"] == 3
+
+
+# ── the wired deny rule: catastrophic steps are blocked without asking ──
+
+async def test_catastrophic_step_is_auto_blocked_with_the_real_rules(tmp_path: Path):
+    from kirowhisper.risk import RiskClassifier, is_catastrophic
+
+    wipe = Approval(request_id="c1", slot="s", tool_title="Running: rm -rf /", is_shell=True)
+    risky = Approval(request_id="c2", slot="s", tool_title="Running: rm -rf /tmp/x",
+                     is_shell=True)
+    gw = FakeGateway([wipe, risky])
+    eng = _engine(gw, RiskClassifier(), tmp_path, deny_check=is_catastrophic)
+    await eng.poll_once()
+    assert gw.rejected == ["c1"]                                   # blocked, never asked
+    assert [p.approval.request_id for p in eng.pending_decisions()] == ["c2"]  # asked

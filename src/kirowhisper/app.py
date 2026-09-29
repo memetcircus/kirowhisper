@@ -12,7 +12,7 @@ from .bedrock import BedrockClassifier
 from .config import Config, load_config
 from .gateway_client import GatewayClient
 from .mcp_server import KiroWhisperServices, build_server
-from .risk import RiskClassifier
+from .risk import RiskClassifier, is_catastrophic
 from .summarizer import Summarizer
 
 
@@ -35,7 +35,9 @@ def build_services(
         classifier = RiskClassifier()  # rules only; inconclusive -> UNKNOWN (safe)
         summarizer = Summarizer(cfg.bedrock)
 
-    ambient = AmbientEngine(gateway, classifier, audit, cfg.ambient)
+    # is_catastrophic wires the AUTO_BLOCK bucket: without a deny check, nothing
+    # would ever be blocked silently and every catastrophic step would interrupt you.
+    ambient = AmbientEngine(gateway, classifier, audit, cfg.ambient, deny_check=is_catastrophic)
 
     return KiroWhisperServices(
         gateway=gateway,
