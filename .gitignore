@@ -47,3 +47,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Personal brainstorm notes (kept local, not part of the submission)
+docs/PROJECT_NOTES.md
