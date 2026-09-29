@@ -214,6 +214,15 @@ class GatewayClient:
             if msg.get("role") == "assistant":
                 last_assistant = str(msg.get("content", "")).strip()
                 break
+        # The first user message is the task the session was asked to do — the
+        # "what is this working on" half of a session description.
+        first_user = ""
+        for msg in messages:
+            if msg.get("role") == "user":
+                first_user = str(msg.get("content", "")).strip()
+                break
+        # Turns = assistant replies; a rough "how far along" signal.
+        turns = sum(1 for m in messages if m.get("role") == "assistant")
         awaiting = await self.get_slot_pending_approval(slot) is not None
         return {
             "slot": slot,
@@ -221,6 +230,8 @@ class GatewayClient:
             "running": bool(obj.get("running")),
             "stopping": bool(obj.get("stopping")),
             "awaiting_approval": awaiting,
+            "task": first_user,
+            "turns": turns,
             "last_message": last_assistant,
         }
 

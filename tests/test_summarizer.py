@@ -188,6 +188,43 @@ def test_task_health_no_active_sessions():
     assert "no active sessions" in s.task_health([]).lower()
 
 
+def test_describe_session_fallback_says_task_and_state():
+    s = Summarizer(BedrockConfig())  # no Bedrock client -> deterministic
+    sess = {
+        "title": "Build the parser", "running": True, "awaiting_approval": False,
+        "turns": 3, "task": "Write a JSON parser in parser.py and add tests.",
+        "last_message": "Added the tokenizer; writing the grammar next.",
+    }
+    out = s.describe_session(sess)
+    assert "Build the parser" in out
+    assert "still working" in out.lower()
+    assert "json parser" in out.lower()          # the task, lower-cased mid-sentence
+    assert "3 steps" in out
+
+
+def test_describe_session_awaiting_state():
+    s = Summarizer(BedrockConfig())
+    sess = {"title": "Deploy", "running": False, "awaiting_approval": True,
+            "turns": 1, "task": "Deploy to staging.", "last_message": "Ready to deploy."}
+    out = s.describe_session(sess)
+    assert "waiting for your approval" in out.lower()
+
+
+def test_describe_session_masks_secrets():
+    s = Summarizer(BedrockConfig())
+    sess = {"title": "Configure", "running": False, "awaiting_approval": False,
+            "turns": 1, "task": "Set api_key=supersecret123 in config.",
+            "last_message": "Wrote the config."}
+    out = s.describe_session(sess)
+    assert "supersecret123" not in out
+    assert "***REDACTED***" in out
+
+
+def test_describe_session_empty():
+    s = Summarizer(BedrockConfig())
+    assert "don't have a session" in s.describe_session({}).lower()
+
+
 def test_status_summary_phrasing():
     s = Summarizer(BedrockConfig())
     assert s.status_summary(done=2, pending=1) == "2 tasks done and 1 waiting for you."

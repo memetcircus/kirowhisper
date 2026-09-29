@@ -43,10 +43,11 @@ class FakeGateway:
     async def list_slot_summaries(self):
         return [
             {"slot": "s1", "title": "Shell Command Test", "running": False,
-             "awaiting_approval": False,
+             "awaiting_approval": False, "task": "Run a bad command.", "turns": 2,
              "last_message": "As expected, it failed: command not found."},
             {"slot": "s2", "title": "Build parser", "running": True,
-             "awaiting_approval": False, "last_message": "Working."},
+             "awaiting_approval": False, "task": "Build a JSON parser.", "turns": 3,
+             "last_message": "Working."},
         ]
 
 
@@ -164,6 +165,16 @@ async def test_check_task_health_names_the_failed_task(tmp_path: Path):
     assert "reported a problem" in out.lower()
     assert "Shell Command Test" in out
     assert "1 still running" in out
+
+
+async def test_describe_session_picks_running_and_describes_it(tmp_path: Path):
+    svc, _, _ = _services(tmp_path)
+    server = build_server(svc)
+    out = await _call(server, "describe_session")
+    # The running session (Build parser) is chosen over the finished one.
+    assert "Build parser" in out
+    assert "still working" in out.lower()
+    assert "2 sessions in total" in out  # both fake slots have task/last_message
 
 
 async def test_get_status_includes_ambient_and_sessions(tmp_path: Path):

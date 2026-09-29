@@ -7,6 +7,7 @@ Gateway + Ambient Awareness engine at runtime — not merely named in a README.
 Tools:
   - get_status            : overall status + ambient summary (passed/blocked/waiting)
   - check_task_health     : which task failed / how the running tasks are doing
+  - describe_session      : what a session is working on and where it stands
   - get_pending_decisions : the decisions Ambient surfaced, voice-friendly
   - explain_top           : why the top decision is risky + what rejecting it does
   - approve_top           : approve the highest-risk pending decision (no id needed)
@@ -130,6 +131,44 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         except GatewayError as exc:
             return f"I couldn't reach the crew to check task health: {exc}"
         return svc.summarizer.task_health(slots)
+
+    @mcp.tool(
+        description=(
+            "Describe what a session is working on and where it stands: call this for "
+            "'tell me about that session', 'what is it working on', 'what's it doing', "
+            "'tell me more about the active one', 'describe the running task'. Speaks the "
+            "task it was given and its current state. Read-only. Speak the result as "
+            "given. If there are several sessions, it describes the most relevant one "
+            "(running, then awaiting approval, then the rest)."
+        ),
+        structured_output=False,
+    )
+    async def describe_session() -> str:
+        try:
+            sessions = await svc.gateway.list_slot_summaries()
+        except GatewayError as exc:
+            return f"I couldn't reach the crew to describe the session: {exc}"
+        # Ignore empty/never-used slots (no task, no messages) — nothing to say.
+        active = [s for s in sessions if s.get("task") or s.get("last_message")]
+        if not active:
+            return "There are no active sessions to describe right now."
+        # Pick the most interesting one for an eyes-free "that session" reference:
+        # something running, else something awaiting approval, else the first.
+        def rank(s: dict) -> int:
+            if s.get("running"):
+                return 0
+            if s.get("awaiting_approval"):
+                return 1
+            return 2
+        active.sort(key=rank)
+        chosen = active[0]
+        spoken = svc.summarizer.describe_session(chosen)
+        if len(active) > 1:
+            spoken += (
+                f" There are {len(active)} sessions in total; "
+                "say 'check task health' to hear them all."
+            )
+        return spoken
 
     @mcp.tool(
         description=(

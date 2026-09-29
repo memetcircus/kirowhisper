@@ -195,6 +195,73 @@ class Summarizer:
             parts.append(_join_spoken(roll).capitalize() + ".")
         return " ".join(parts)
 
+    # ── session description ("tell me about that session") ──
+
+    def describe_session(self, session: dict) -> str:
+        """A spoken description of ONE session: what it's working on and where it
+        stands right now.
+
+        ``session`` is a slot summary from ``GatewayClient.get_slot_summary``
+        (title, task, running, awaiting_approval, turns, last_message). Uses
+        Bedrock for a natural one-liner when available, but always has a
+        deterministic fallback so the voice never goes silent (NFR-2). Secrets are
+        masked; output stays short (NFR-3).
+        """
+        if not session:
+            return "I don't have a session to describe."
+
+        title = _short_title(str(session.get("title") or "a session"))
+        task = mask_secrets(str(session.get("task") or "").strip())
+        last = mask_secrets(str(session.get("last_message") or "").strip())
+        running = bool(session.get("running"))
+        awaiting = bool(session.get("awaiting_approval"))
+        turns = int(session.get("turns") or 0)
+
+        if self._client is not None:
+            spoken = self._try_bedrock_session(title, task, last, running, awaiting)
+            if spoken:
+                return _clip(mask_secrets(spoken), max_words=45)
+
+        # Deterministic fallback: task + current state, in plain speech.
+        state = (
+            "waiting for your approval" if awaiting
+            else "still working" if running
+            else "finished"
+        )
+        parts = [f"{title} is {state}"]
+        if task:
+            parts[0] = f"{title}: I asked it to {_lower_first(_first_sentence(task))}. It's {state}"
+        if last:
+            parts.append(f"The latest: {_first_sentence(last)}")
+        if turns:
+            parts.append(f"{turns} step{'' if turns == 1 else 's'} so far.")
+        return _clip(" ".join(parts), max_words=45)
+
+    def _try_bedrock_session(
+        self, title: str, task: str, last: str, running: bool, awaiting: bool
+    ) -> str | None:
+        state = "awaiting approval" if awaiting else "running" if running else "finished"
+        prompt = (
+            f"Session title: {title}\nState: {state}\n"
+            f"Task it was given: {task[:500]}\n"
+            f"Its latest message: {last[:800]}\n\n"
+            "In one or two short spoken sentences, tell the user what this session is "
+            "working on and where it stands. No code, no markdown."
+        )
+        try:
+            resp = self._client.converse(
+                modelId=self._cfg.fast_model_id,
+                system=[{"text": (
+                    "You summarize one autonomous coding session for a developer who is "
+                    "not looking at a screen. Be concrete and brief. Max 40 words."
+                )}],
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                inferenceConfig={"maxTokens": 100, "temperature": 0.2},
+            )
+            return resp["output"]["message"]["content"][0]["text"].strip()
+        except Exception:  # noqa: BLE001 - fallback covers any failure
+            return None
+
     # ── status / ambient summary ──
 
     def status_summary(self, *, done: int, pending: int, failed: int = 0) -> str:
@@ -355,6 +422,17 @@ def _split_sentences(text: str) -> list[str]:
     if buf.strip():
         out.append(buf.strip())
     return out
+
+
+def _first_sentence(text: str, max_words: int = 20) -> str:
+    """First sentence of a message, clipped — enough to convey intent by voice."""
+    s = _split_sentences(text)
+    first = s[0] if s else text
+    return _clip(first.strip(" .:-"), max_words=max_words)
+
+
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:] if text else text
 
 
 def _short_title(title: str, max_words: int = 8) -> str:
