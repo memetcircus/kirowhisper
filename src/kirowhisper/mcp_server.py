@@ -71,6 +71,18 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
     pending_confirmations: dict[str, float] = {}
     confirmation_ttl_s = 30.0
 
+    def keep_open(text: str) -> str:
+        """Ensure a read-only reply ends with a question so the Alexa bridge keeps
+        the mic open (endsWithQuestion). A voice user overseeing the crew asks
+        several things in a row ("status" -> "which failed?" -> "tell me about it");
+        if a plain-statement reply closes the session, every follow-up needs a fresh
+        "open kiro whisper". If the reply already ends in a question, leave it.
+        """
+        stripped = text.rstrip()
+        if stripped.endswith("?"):
+            return text
+        return f"{stripped} Anything else you'd like to check?"
+
     def prune_confirmations(live_ids: set[str]) -> None:
         """Forget confirmations that expired or no longer match a live decision."""
         now = time.monotonic()
@@ -113,7 +125,7 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
             first_check=first_check,
         )
         svc.audit.mark_status_check()
-        return speech
+        return keep_open(speech)
 
     @mcp.tool(
         description=(
@@ -130,7 +142,7 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
             slots = await svc.gateway.list_slot_summaries()
         except GatewayError as exc:
             return f"I couldn't reach the crew to check task health: {exc}"
-        return svc.summarizer.task_health(slots)
+        return keep_open(svc.summarizer.task_health(slots))
 
     @mcp.tool(
         description=(
@@ -168,7 +180,7 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
                 f" There are {len(active)} sessions in total; "
                 "say 'check task health' to hear them all."
             )
-        return spoken
+        return keep_open(spoken)
 
     @mcp.tool(
         description=(

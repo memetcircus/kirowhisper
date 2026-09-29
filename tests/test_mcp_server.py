@@ -167,6 +167,16 @@ async def test_check_task_health_names_the_failed_task(tmp_path: Path):
     assert "1 still running" in out
 
 
+async def test_read_only_replies_keep_the_mic_open(tmp_path: Path):
+    # get_status / check_task_health / describe_session must end in a question so
+    # the Alexa bridge keeps the session open for a follow-up (endsWithQuestion).
+    svc, _, _ = _services(tmp_path)
+    server = build_server(svc)
+    for tool in ("get_status", "check_task_health", "describe_session"):
+        out = await _call(server, tool)
+        assert out.rstrip().endswith("?"), f"{tool} did not keep the mic open: {out!r}"
+
+
 async def test_describe_session_picks_running_and_describes_it(tmp_path: Path):
     svc, _, _ = _services(tmp_path)
     server = build_server(svc)
