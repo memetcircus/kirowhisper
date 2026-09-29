@@ -194,6 +194,17 @@ async def test_get_status_includes_ambient_and_sessions(tmp_path: Path):
     assert "session" in out.lower()
 
 
+async def test_get_status_session_count_matches_health_and_describe(tmp_path: Path):
+    # The two fake slots are both real (task + last_message), so every tool that
+    # mentions a session count must agree — no "one active" here, "two" there.
+    svc, _, _ = _services(tmp_path)
+    server = build_server(svc)
+    status = await _call(server, "get_status")
+    describe = await _call(server, "describe_session")
+    assert "2 active sessions" in status          # from the non-empty slot count
+    assert "2 sessions in total" in describe       # same source, same number
+
+
 async def test_get_status_is_a_while_you_were_away_digest(tmp_path: Path):
     svc, _, ambient = _services(tmp_path)
     server = build_server(svc)

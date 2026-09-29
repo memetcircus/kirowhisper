@@ -110,10 +110,20 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         checkpoint = svc.audit.last_status_check()
         first_check = checkpoint is None
         digest = svc.audit.digest_since(svc.audit.started_at if first_check else checkpoint)
+        # Session count must match what check_task_health / describe_session report,
+        # or the user hears "one active session" then "two sessions" and can't tell
+        # which is right. Both of those count real (non-empty) slots, so get_status
+        # does the same here instead of the Gateway's /api/status "sessions" (which
+        # counts only currently-running ones and drifts from the slot list). Fall
+        # back to the Gateway number only if the slot list is unavailable.
         try:
-            gw_status = await svc.gateway.get_status()
+            summaries = await svc.gateway.list_slot_summaries()
+            sessions = sum(1 for s in summaries if s.get("task") or s.get("last_message"))
         except GatewayError:
-            gw_status = {}
+            try:
+                sessions = (await svc.gateway.get_status()).get("sessions")
+            except GatewayError:
+                sessions = None
         speech = svc.summarizer.status_digest(
             raised=digest.raised,
             auto_passed=digest.auto_passed,
@@ -121,7 +131,7 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
             you_approved=digest.you_approved,
             you_rejected=digest.you_rejected,
             waiting=len(svc.ambient.pending_decisions()),
-            sessions=gw_status.get("sessions"),
+            sessions=sessions,
             first_check=first_check,
         )
         svc.audit.mark_status_check()
