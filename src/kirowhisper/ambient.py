@@ -28,6 +28,7 @@ from .models import (
     DecisionAction,
     PendingDecision,
     RiskAssessment,
+    RiskLevel,
 )
 from .policy import decide
 from .risk import RiskClassifier
@@ -204,6 +205,37 @@ class AmbientEngine:
                                "trust granted mid-session", by="system")
             cleared += 1
         return cleared
+
+    async def approve_pending_safe(self) -> tuple[int, int]:
+        """One-shot: approve every rule-certain LOW decision waiting right now.
+
+        This is "approve all the safe ones" WITHOUT flipping on session trust: it
+        clears the currently-waiting safe steps but does not change how future
+        approvals are routed. The safety bar is identical to trust — only a
+        deterministic (rule-certain) LOW is approved; HIGH, UNKNOWN, and a
+        model-guessed LOW are left surfaced, untouched. A catastrophic step (deny
+        rule) is also left for the user, never silently approved here.
+
+        Returns (approved, remaining): how many were cleared, and how many are
+        still waiting for the user afterwards.
+        """
+        approved = 0
+        for rid, pending in list(self._pending.items()):
+            # Never batch-approve something a deny rule would block.
+            if self._deny_check(pending.approval):
+                continue
+            # Only rule-certain LOW clears — same gate the policy uses under trust.
+            if not (pending.risk.level == RiskLevel.LOW and pending.risk.deterministic):
+                continue
+            self._pending.pop(rid, None)
+            await self._safe_resolve(pending.approval, pending.risk, approved=True)
+            if rid in self._pending:
+                continue  # resolve failed and was re-queued -> leave it surfaced
+            self._counts[DecisionAction.AUTO_APPROVE.value] += 1
+            self._audit.record(rid, pending.risk.level, DecisionAction.AUTO_APPROVE,
+                               "user approved all safe (voice, batch)", by="user")
+            approved += 1
+        return approved, len(self._pending)
 
     def set_on_surface(self, callback: SurfaceCallback) -> None:
         """Register the proactive callback fired when a decision is surfaced."""

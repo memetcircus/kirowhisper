@@ -243,6 +243,68 @@ async def test_unrelated_pending_survives_cleanup(tmp_path: Path):
     assert remaining == {"keep"}
 
 
+# ── approve_pending_safe (one-shot "approve all the safe ones") ──
+
+async def test_approve_pending_safe_clears_only_rule_certain_low(tmp_path: Path):
+    from kirowhisper.models import PendingDecision
+
+    gw = FakeGateway([])  # no polling; we queue directly
+    eng = _engine(gw, FixedClassifier(RiskLevel.LOW), tmp_path)  # trust OFF
+
+    def surface(rid, level, deterministic):
+        eng.requeue(PendingDecision(
+            approval=_ap(rid),
+            risk=RiskAssessment(level, "reason", deterministic=deterministic),
+        ))
+
+    surface("safe1", RiskLevel.LOW, True)     # rule-certain LOW -> cleared
+    surface("safe2", RiskLevel.LOW, True)     # rule-certain LOW -> cleared
+    surface("guess", RiskLevel.LOW, False)    # model-guessed LOW -> stays
+    surface("danger", RiskLevel.HIGH, True)   # HIGH -> stays
+
+    approved, remaining = await eng.approve_pending_safe()
+    assert approved == 2
+    assert remaining == 2
+    assert sorted(gw.approved) == ["safe1", "safe2"]
+    left = {p.approval.request_id for p in eng.pending_decisions()}
+    assert left == {"guess", "danger"}  # nothing risky was touched
+
+
+async def test_approve_pending_safe_does_not_enable_trust(tmp_path: Path):
+    # It is one-shot: after clearing the safe backlog, a NEW low-risk approval must
+    # still surface (trust was never turned on).
+    from kirowhisper.models import PendingDecision
+
+    gw = FakeGateway([_ap("later")])
+    eng = _engine(gw, FixedClassifier(RiskLevel.LOW), tmp_path)  # trust OFF
+    eng.requeue(PendingDecision(
+        approval=_ap("now"),
+        risk=RiskAssessment(RiskLevel.LOW, "read-only", deterministic=True),
+    ))
+    approved, _ = await eng.approve_pending_safe()
+    assert approved == 1 and gw.approved == ["now"]
+
+    await eng.poll_once()  # a new LOW arrives
+    assert gw.approved == ["now"]                 # not auto-approved
+    assert len(eng.pending_decisions()) == 1      # surfaced, because trust stayed off
+
+
+async def test_approve_pending_safe_never_approves_catastrophic(tmp_path: Path):
+    # Even a step the classifier calls LOW must not be batch-approved if the deny
+    # check flags it catastrophic — it stays for the user (defense-in-depth).
+    from kirowhisper.models import PendingDecision
+
+    gw = FakeGateway([])
+    eng = _engine(gw, FixedClassifier(RiskLevel.LOW), tmp_path, deny_check=lambda a: True)
+    eng.requeue(PendingDecision(
+        approval=_ap("boom"),
+        risk=RiskAssessment(RiskLevel.LOW, "looks safe but denied", deterministic=True),
+    ))
+    approved, remaining = await eng.approve_pending_safe()
+    assert approved == 0 and remaining == 1
+    assert gw.approved == []
+
+
 # ── snapshot ──
 
 async def test_snapshot_counts(tmp_path: Path):

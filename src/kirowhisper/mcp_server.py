@@ -10,6 +10,7 @@ Tools:
   - explain_top           : why the top decision is risky + what rejecting it does
   - approve_top           : approve the highest-risk pending decision (no id needed)
   - reject_top            : reject/skip the highest-risk pending decision (no id needed)
+  - approve_all_safe      : approve all rule-certain low-risk waiting steps at once
   - approve               : approve a surfaced decision by request_id (low-level)
   - reject                : reject a surfaced decision by request_id (low-level)
   - trust_session         : auto-approve remaining low-risk steps this session
@@ -274,6 +275,38 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         remaining = len(svc.ambient.pending_decisions())
         tail = f" {remaining} more waiting." if remaining else ""
         return f"I didn't do it. The task can continue past this step.{tail}"
+
+    @mcp.tool(
+        description=(
+            "Approve every SAFE waiting decision at once — for 'approve all the safe "
+            "ones', 'clear the safe ones', 'approve everything low-risk'. Approves "
+            "only rule-certain low-risk steps (read/list/search); it never approves "
+            "anything high-risk, uncertain, or catastrophic — those stay waiting for "
+            "the user. Unlike trust_session it does NOT change how future steps are "
+            "handled; it just clears the safe backlog once. Safe to call: the risky "
+            "decisions are always left for the user to hear and decide."
+        ),
+        structured_output=False,
+    )
+    async def approve_all_safe() -> str:
+        approved, remaining = await svc.ambient.approve_pending_safe()
+        if approved == 0:
+            if remaining:
+                return (
+                    "None of the waiting decisions are safe to auto-approve — they all "
+                    f"need you. {remaining} still waiting. Say 'what needs my decision' "
+                    "to hear them."
+                )
+            return "There are no safe decisions waiting to approve."
+        noun = "step" if approved == 1 else "steps"
+        if remaining:
+            tail = (
+                f" {remaining} riskier decision{'' if remaining == 1 else 's'} still "
+                "need you."
+            )
+        else:
+            tail = " Nothing riskier is waiting."
+        return f"Approved {approved} safe {noun}.{tail}"
 
     @mcp.tool(
         description=(

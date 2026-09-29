@@ -273,3 +273,44 @@ async def test_explain_top_prioritizes_high_risk(tmp_path: Path):
     # HIGH-risk framing wins ("may not be reversible"), not the LOW reassurance.
     assert "reversible" in out.lower()
     assert "low risk" not in out.lower()
+
+
+# ---- approve_all_safe (one-shot batch of the safe backlog) -------------------
+
+
+def _surface_det(ambient, rid, level, deterministic, slot="s"):
+    ap = Approval(request_id=rid, slot=slot, tool_title="Reading config", diff="")
+    ambient.requeue(PendingDecision(
+        approval=ap, risk=RiskAssessment(level, "reason", "spoken", deterministic=deterministic)
+    ))
+
+
+async def test_approve_all_safe_clears_safe_leaves_risky(tmp_path: Path):
+    svc, gw, ambient = _services(tmp_path)
+    _surface_det(ambient, "safe1", RiskLevel.LOW, True, slot="s1")
+    _surface_det(ambient, "safe2", RiskLevel.LOW, True, slot="s2")
+    _surface_det(ambient, "high1", RiskLevel.HIGH, True, slot="s3")
+    server = build_server(svc)
+    out = await _call(server, "approve_all_safe")
+    assert "approved 2 safe" in out.lower()
+    assert "1 riskier decision" in out.lower()
+    assert sorted(gw.approved) == ["safe1", "safe2"]
+    assert {p.approval.request_id for p in ambient.pending_decisions()} == {"high1"}
+
+
+async def test_approve_all_safe_when_nothing_is_safe(tmp_path: Path):
+    svc, gw, ambient = _services(tmp_path)
+    _surface_det(ambient, "high1", RiskLevel.HIGH, True)
+    server = build_server(svc)
+    out = await _call(server, "approve_all_safe")
+    assert "need you" in out.lower()
+    assert gw.approved == []
+    assert len(ambient.pending_decisions()) == 1
+
+
+async def test_approve_all_safe_when_queue_empty(tmp_path: Path):
+    svc, gw, _ = _services(tmp_path)
+    server = build_server(svc)
+    out = await _call(server, "approve_all_safe")
+    assert "no safe decisions" in out.lower()
+    assert gw.approved == []
