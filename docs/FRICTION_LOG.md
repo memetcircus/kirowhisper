@@ -277,8 +277,51 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
 
 ---
 
+### F17 — A newly added MCP tool stayed invisible to the voice agent until the runtime was recreated
+- **Task:** Add a new MCP tool (`check_task_health`) to the running server and reach it
+  by voice ("which task failed") through the Alexa+ bridge.
+- **Steps:** Added the tool server-side (verified live: `tools/list` over the tunnel
+  showed all 11 tools, and a direct `tools/call` returned the correct answer). Then,
+  in order: regenerated the Alexa interaction model and `ask deploy`'d it; redeployed
+  the Lambda via CDK (`npm run deploy`); restarted the local MCP server; updated the
+  AgentCore runtime env several times (cache-buster vars, `LOG_LEVEL=debug`); changed
+  the public tunnel URL and redeployed; lowered `idleTimeoutMinutes` to 1 and waited
+  past it; and even stopped the MCP server briefly to try to force a reconnect.
+- **Expected:** After regenerating + deploying the model and manifest, the agent can
+  call the new tool.
+- **Actual:** The Alexa NLU recognized the new intent (`CheckTaskHealthIntent` reached
+  the Lambda) and the Lambda correctly hinted `tool: check_task_health` to the runtime —
+  but the **agent** kept replying "I don't have a tool to check task health." CloudWatch
+  showed why: every turn logged `warmup … elapsedMs: 0` and there was **no**
+  `mcp session ready` line, i.e. the agent never re-ran `listTools()`. The bridge fetches
+  the MCP tool list once per warm agent session (`startWarmup` is idempotent; it only
+  resets on a *failed* warmup), and that session had cached the pre-tool 8-tool list.
+  The container hosting it lived on (`maxLifetimeHours: 8`) and kept serving the old
+  cache; none of the redeploys, env updates, URL change, idle-timeout drop, or a brief
+  server outage tore that warm session down. Tellingly, with the MCP server **stopped**
+  the agent still answered normally from its cache instead of erroring — proof it wasn't
+  re-listing tools at all.
+- **Severity:** High (a shipped tool is completely unreachable by voice, with no error —
+  the skill even *suggests* the command in its greeting, so it looks broken).
+- **Workaround:** Recreate the runtime from scratch: `npm run destroy` (removes the
+  AgentCore stack **and** the container image) then `npm run deploy` + `npm run
+  skill:deploy`. The brand-new container had no warm session, so its first turn ran a
+  fresh `listTools()` and picked up all 11 tools. Verified live: "check task health" →
+  "One task failed with a command not found error, exit status 127. Two finished
+  cleanly." Adding a tool therefore takes **four** steps, not one: (1) `npm run generate`,
+  (2) `npm run skill:deploy`, (3) `npm run deploy`, and — because of the warm cache —
+  (4) `npm run destroy && npm run deploy` (or otherwise guarantee a cold container).
+- **Suggestion:** The bridge should re-list tools when a turn references a tool the
+  current session doesn't know (or expose a way to invalidate the per-session tool
+  cache), so a newly deployed tool becomes reachable without recreating the runtime.
+  Documenting that the agent snapshots `tools/list` once per warm session — and that
+  `update-agent-runtime` does not necessarily recycle a live container — would have
+  saved hours.
+
+---
+
 ## Severity tally
-- High: F1, F2, F8, F11, F12, F13, F14, F15
+- High: F1, F2, F8, F11, F12, F13, F14, F15, F17
 - Medium: F3, F4, F5, F7, F9, F10
 - Low: F6, F16
 
@@ -298,3 +341,9 @@ the real effect at the source, and keep the safety-critical logic deterministic 
 than dependent on how the model phrases a turn. F16 is a different, welcome kind of
 friction: Crew's own agent already refuses the most catastrophic commands, so our
 auto-block layer is defense-in-depth we don't oversell rather than the star of the demo.
+F17 was the costliest of all: a correctly shipped tool was invisible by voice because a
+warm agent session caches `tools/list` once and the hosting container outlived every
+redeploy — the fix was to recreate the runtime so a cold container re-lists the tools.
+It reinforced the same theme from the other direction: the long-lived, model-driven
+session is the hard part, and "deployed" at the server does not mean "visible" to the
+agent until that session is actually torn down.
