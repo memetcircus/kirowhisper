@@ -81,6 +81,62 @@ class Summarizer:
         tail = f", {lines_changed} lines" if lines_changed else ""
         return f"{title}{tail}. I'm not sure how risky this is, so I'm asking you."
 
+    # ── explanation (the "why" layer) ──
+
+    def explain(self, approval: Approval, risk: RiskAssessment) -> str:
+        """A spoken explanation of a pending decision: what it is, WHY it carries
+        the risk it does, and what happens if the user rejects it.
+
+        Answers the follow-up questions a decision-maker asks out loud —
+        "why is that risky?" and "what happens if I reject it?" — from the risk
+        layer's own reasoning. Deterministic and fast (no Bedrock): it must return
+        inside an Alexa turn, and it should say exactly what the guardrail decided,
+        not a fresh model guess about the same command.
+        """
+        title = approval.tool_title or "this operation"
+        # What it will do (mask any secrets that slipped into the command/diff).
+        what = mask_secrets(approval.purpose.strip()) if approval.purpose else ""
+
+        # Why this risk level. The risk layer's reason is a short noun phrase
+        # ("shell command", "recursive/forced file removal"), so join it with
+        # "because of" for natural speech. Fall back to a full clause per level.
+        reason = mask_secrets(risk.reason.strip()) if risk.reason else ""
+        # What rejecting does — same for every level: the step just doesn't run.
+        reject = "If you reject it, that step won't run and the task continues past it."
+
+        head = f"{title} — {what}" if what else title
+
+        if risk.level == RiskLevel.HIGH:
+            certainty = (
+                "A safety rule flagged this as high risk"
+                if risk.deterministic
+                else "This looks high risk"
+            )
+            why = (
+                f"because of {reason}" if reason
+                else "because it looks destructive or hard to undo"
+            )
+            body = f"{certainty}: {head}. It's flagged {why}. It may not be reversible."
+        elif risk.level == RiskLevel.LOW:
+            certainty = (
+                "A safety rule cleared this as low risk"
+                if risk.deterministic
+                else "This looks low risk"
+            )
+            because = f", because it's {reason}" if reason else ""
+            body = f"{certainty}: {head}{because}. It's reversible."
+        else:  # UNKNOWN
+            why = (
+                f"because {reason}" if reason
+                else "because I couldn't classify it with confidence"
+            )
+            body = (
+                f"I'm not sure how risky this is, so I'm asking you: {head}. "
+                f"It's flagged {why}. I can't tell if it's reversible."
+            )
+
+        return _clip(f"{body} {reject}", max_words=60)
+
     # ── status / ambient summary ──
 
     def status_summary(self, *, done: int, pending: int, failed: int = 0) -> str:

@@ -7,6 +7,7 @@ Gateway + Ambient Awareness engine at runtime — not merely named in a README.
 Tools:
   - get_status            : overall status + ambient summary (passed/blocked/waiting)
   - get_pending_decisions : the decisions Ambient surfaced, voice-friendly
+  - explain_top           : why the top decision is risky + what rejecting it does
   - approve_top           : approve the highest-risk pending decision (no id needed)
   - reject_top            : reject/skip the highest-risk pending decision (no id needed)
   - approve               : approve a surfaced decision by request_id (low-level)
@@ -152,6 +153,31 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
             f"{head}The most important one: {summary}. "
             "What would you like to do — approve it, or reject it?"
         )
+
+    @mcp.tool(
+        description=(
+            "Explain the waiting decision the user just heard: call this for "
+            "'why is that risky', 'what does it do', 'what happens if I reject it', "
+            "'tell me more', or any follow-up question about the top decision. "
+            "Speaks WHY it carries its risk level and what rejecting it would do. "
+            "Read-only and always safe: it never approves or rejects anything. After "
+            "explaining, STOP and wait for the user to say approve or reject."
+        ),
+        # structured_output=False for the same reason as get_pending_decisions: the
+        # Alexa bridge drops the spoken text when a tool advertises an output schema,
+        # so this must be a single plain-text block the model reads aloud verbatim.
+        structured_output=False,
+    )
+    async def explain_top() -> str:
+        pend = svc.ambient.pending_decisions()
+        if not pend:
+            return "There's nothing waiting for you to explain right now."
+        pend.sort(key=lambda p: 0 if p.risk.level == RiskLevel.HIGH else 1)
+        top = pend[0]
+        explanation = svc.summarizer.explain(top.approval, top.risk)
+        # End on a neutral question so the Alexa mic stays open (endsWithQuestion)
+        # and a stray "yes" isn't taken as approval — approve_top confirms anyway.
+        return f"{explanation} Would you like to approve it, or reject it?"
 
     @mcp.tool(
         description=(

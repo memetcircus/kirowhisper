@@ -77,6 +77,46 @@ def test_bedrock_error_falls_back():
     assert "Careful" in out
 
 
+def test_explain_high_says_why_and_reject_outcome():
+    s = Summarizer(BedrockConfig())
+    ap = Approval(request_id="x", slot="s", tool_title="Delete auth.js",
+                  purpose="remove the old login module")
+    risk = RiskAssessment(RiskLevel.HIGH, "recursive file removal", deterministic=True)
+    out = s.explain(ap, risk)
+    assert "safety rule flagged this as high risk" in out.lower()
+    assert "because of recursive file removal" in out.lower()
+    assert "won't run" in out.lower()  # what rejecting does
+    assert "may not be reversible" in out.lower()
+
+
+def test_explain_low_reassures_and_marks_reversible():
+    s = Summarizer(BedrockConfig())
+    ap = Approval(request_id="x", slot="s", tool_title="Read config")
+    risk = RiskAssessment(RiskLevel.LOW, "read-only access", deterministic=True)
+    out = s.explain(ap, risk)
+    assert "low risk" in out.lower()
+    assert "it's reversible" in out.lower()
+
+
+def test_explain_unknown_admits_uncertainty():
+    s = Summarizer(BedrockConfig())
+    ap = Approval(request_id="x", slot="s", tool_title="Run script")
+    risk = RiskAssessment(RiskLevel.UNKNOWN, "")
+    out = s.explain(ap, risk)
+    assert "not sure" in out.lower()
+    assert "asking you" in out.lower()
+
+
+def test_explain_masks_secrets():
+    s = Summarizer(BedrockConfig())
+    ap = Approval(request_id="x", slot="s", tool_title="Write env",
+                  purpose="set api_key=supersecret123 in the config")
+    risk = RiskAssessment(RiskLevel.HIGH, "writes a credential", deterministic=True)
+    out = s.explain(ap, risk)
+    assert "supersecret123" not in out
+    assert "***REDACTED***" in out
+
+
 def test_status_summary_phrasing():
     s = Summarizer(BedrockConfig())
     assert s.status_summary(done=2, pending=1) == "2 tasks done and 1 waiting for you."

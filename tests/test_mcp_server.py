@@ -237,3 +237,39 @@ async def test_approve_top_nothing_pending(tmp_path: Path):
     out = await _call(server, "approve_top")
     assert "nothing waiting" in out.lower()
     assert gw.approved == []
+
+
+# ---- explain_top (the "why" layer) ------------------------------------------
+
+
+async def test_explain_top_nothing_pending(tmp_path: Path):
+    svc, _, _ = _services(tmp_path)
+    server = build_server(svc)
+    out = await _call(server, "explain_top")
+    assert "nothing waiting" in out.lower()
+
+
+async def test_explain_top_explains_and_never_acts(tmp_path: Path):
+    svc, gw, ambient = _services(tmp_path)
+    _surface(ambient, "high1", RiskLevel.HIGH)
+    server = build_server(svc)
+    out = await _call(server, "explain_top")
+    # Explains WHY (reason) and what rejecting does, then offers both choices.
+    assert "reason" in out.lower()          # the risk assessment's reason text
+    assert "won't run" in out.lower()       # what rejecting would do
+    assert "approve" in out.lower() and "reject" in out.lower()
+    assert out.rstrip().endswith("?")       # keeps the Alexa mic open
+    # Purely read-only: nothing was approved or rejected, item still queued.
+    assert gw.approved == [] and gw.rejected == []
+    assert ambient.take_pending("high1") is not None
+
+
+async def test_explain_top_prioritizes_high_risk(tmp_path: Path):
+    svc, _, ambient = _services(tmp_path)
+    _surface(ambient, "low1", RiskLevel.LOW, slot="s1")
+    _surface(ambient, "high1", RiskLevel.HIGH, slot="s2")
+    server = build_server(svc)
+    out = await _call(server, "explain_top")
+    # HIGH-risk framing wins ("may not be reversible"), not the LOW reassurance.
+    assert "reversible" in out.lower()
+    assert "low risk" not in out.lower()
