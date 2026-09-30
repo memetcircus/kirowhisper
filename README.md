@@ -16,6 +16,12 @@ Built for the **Amazon "Build, Ship, Shape" Developer Hackathon** — **Alexa+ t
 (self-hosted MCP server), with the **AWS Builder** mini-challenge (Amazon Bedrock,
 Bedrock AgentCore, Strands, Kiro Crew).
 
+> **Part of a line of work.** This follows [**KiroCan**](https://marketplace.logi.com/plugin/KiroMxConsole/en),
+> my earlier project (live on the Logi Plugin Marketplace) that drives the Kiro **IDE**
+> from a physical Logitech MX keypad. KiroCan is hands-on control at your desk;
+> KiroWhisper is the next step — **voice control of an autonomous Kiro Crew for when
+> you're away from the machine entirely.** IDE-at-your-desk → crew-across-the-room.
+
 > **What runs where.** KiroWhisper is a real, self-hosted **MCP server** (spec
 > 2025-11-25, Streamable HTTP) wired to the real Kiro Crew Gateway and Amazon Bedrock.
 > The official Alexa+ MCP add-on toolkit is not yet publicly available, so we reach

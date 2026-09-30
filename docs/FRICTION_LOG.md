@@ -282,7 +282,7 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
 - **Task:** Add a new MCP tool (`check_task_health`) to the running server and reach it
   by voice ("which task failed") through the Alexa+ bridge.
 - **Steps:** Added the tool server-side (verified live: `tools/list` over the tunnel
-  showed all 11 tools, and a direct `tools/call` returned the correct answer). Then,
+  showed the new tool, and a direct `tools/call` returned the correct answer). Then,
   in order: regenerated the Alexa interaction model and `ask deploy`'d it; redeployed
   the Lambda via CDK (`npm run deploy`); restarted the local MCP server; updated the
   AgentCore runtime env several times (cache-buster vars, `LOG_LEVEL=debug`); changed
@@ -307,7 +307,7 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
 - **Workaround:** Recreate the runtime from scratch: `npm run destroy` (removes the
   AgentCore stack **and** the container image) then `npm run deploy` + `npm run
   skill:deploy`. The brand-new container had no warm session, so its first turn ran a
-  fresh `listTools()` and picked up all 11 tools. Verified live: "check task health" →
+  fresh `listTools()` and picked up the new tool. Verified live: "check task health" →
   "One task failed with a command not found error, exit status 127. Two finished
   cleanly." Adding a tool therefore takes **four** steps, not one: (1) `npm run generate`,
   (2) `npm run skill:deploy`, (3) `npm run deploy`, and — because of the warm cache —
