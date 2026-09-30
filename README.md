@@ -134,11 +134,11 @@ nuance and by a human for anything uncertain.
 ```mermaid
 graph TD
     User["🗣️ You (voice)"]
-    Echo["🔵 Echo / Alexa+ device"]
+    Echo["🔵 Echo Dot Max<br/>(Alexa+)"]
 
-    subgraph AWS ["AWS"]
+    subgraph AWS ["AWS — Alexa+ path"]
         Skill["Alexa Skill (Lambda)"]
-        Agent["Bedrock AgentCore agent<br/>(Strands + Nova, from<br/>alexa-skill-mcp-bridge)"]
+        Agent["Bedrock AgentCore agent — the Alexa+ MCP client<br/>(Strands + Nova, from alexa-skill-mcp-bridge;<br/>stands in for the not-yet-public Alexa+ MCP add-on)"]
     end
 
     subgraph Local ["Your machine — KiroWhisper MCP server (Streamable HTTP, stateless)"]
