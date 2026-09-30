@@ -78,17 +78,17 @@ from the screen — the curb-cut effect.
 ### What a session sounds like
 
 ```
-You:   Alexa, open kiro whisper.
-Alexa: Welcome to kirowhisper. Say "get status" or "what needs my decision".
-You:   Get status.
-Alexa: One decision is waiting for you, and the crew has four active sessions.
-You:   What needs my decision?
-Alexa: The most important one: a shell command that removes a file. This may be
-       irreversible. Do you want to approve it or reject it?
-You:   Approve it.
-Alexa: This is high-risk. To confirm, are you sure you want to approve this?
-You:   Yes.
-Alexa: Approved. The task is continuing.
+You:    Alexa, open kiro whisper.
+Alexa+: Welcome to kirowhisper. Say "get status" or "what needs my decision".
+You:    Get status.
+Alexa+: One decision is waiting for you, and the crew has four active sessions.
+You:    What needs my decision?
+Alexa+: The most important one: a shell command that removes a file. This may be
+        irreversible. Do you want to approve it or reject it?
+You:    Approve it.
+Alexa+: This is high-risk. To confirm, are you sure you want to approve this?
+You:    Yes.
+Alexa+: Approved. The task is continuing.
 ```
 
 This flow was run live in the Alexa developer console against a real Kiro Crew
