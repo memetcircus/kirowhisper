@@ -131,34 +131,84 @@ nuance and by a human for anything uncertain.
 
 ## Architecture
 
-```
- Echo / Alexa                 AWS                             Your machine
- ────────────                 ───                             ────────────
-  "what needs      ──▶  Alexa Skill (Lambda)
-   my decision?"              │
-                              ▼
-                        Bedrock AgentCore agent        ──HTTPS tunnel──▶  KiroWhisper MCP server
-                        (Strands + Nova, from                            (Streamable HTTP, stateless)
-                         alexa-skill-mcp-bridge)                          ├─ Ambient engine (three buckets)
-                              │                                           ├─ Risk classifier (rules → Bedrock)
-  spoken reply     ◀──────────┘                                           ├─ Summarizer (voice-friendly)
-                                                                          └─ Gateway client ──▶ Kiro Crew Gateway
-                                                                                                (localhost:5476)
+```mermaid
+graph TD
+    User["🗣️ You (voice)"]
+    Echo["🔵 Echo / Alexa+ device"]
+
+    subgraph AWS ["AWS"]
+        Skill["Alexa Skill (Lambda)"]
+        Agent["Bedrock AgentCore agent<br/>(Strands + Nova, from<br/>alexa-skill-mcp-bridge)"]
+    end
+
+    subgraph Local ["Your machine — KiroWhisper MCP server (Streamable HTTP, stateless)"]
+        Ambient["Ambient engine<br/>(three buckets: pass / block / surface)"]
+        Risk["Risk classifier<br/>(deterministic rules → Bedrock)"]
+        Summ["Summarizer<br/>(voice-friendly, Bedrock + fallback)"]
+        Audit["Audit log<br/>(every decision)"]
+        GW["Gateway client"]
+    end
+
+    Bedrock["☁️ Amazon Bedrock<br/>(Nova, us-east-1)"]
+    Crew["🤖 Kiro Crew Gateway<br/>(localhost:5476)"]
+
+    User -->|"speech"| Echo
+    Echo -->|"turn"| Skill
+    Skill --> Agent
+    Agent -->|"MCP tool call<br/>(HTTPS tunnel)"| Ambient
+    Ambient --> Risk
+    Ambient --> Summ
+    Ambient --> Audit
+    Ambient --> GW
+    Risk -.->|"ambiguous only"| Bedrock
+    Summ -.-> Bedrock
+    GW -->|"status / approvals /<br/>approve / reject"| Crew
+    Ambient -->|"spoken reply"| Agent
+    Agent --> Skill
+    Skill --> Echo
+    Echo -->|"voice"| User
 ```
 
-- **The intelligence is ours; the voice transport is swappable.** Risk classification,
-  the three-bucket policy, the two-step confirmation and the spoken wording all live in
-  the MCP server. The Alexa side only turns speech into tool calls and back.
-- **Amazon Bedrock** (Nova Lite, `us-east-1`) does nuanced risk classification and
-  voice-friendly summaries. Deterministic rules run first and always win in the safe
-  direction; Bedrock is consulted only when the rules are inconclusive.
-- **Fail-safe by default:** anything uncertain is surfaced to you, never silently
-  approved.
-- The server runs **stateless** (each request stands alone), so a long-lived Alexa agent
-  behind a tunnel never hits a dead MCP session.
+**Data flow.**
+- **Ask flow (you → crew):** speech → Echo → Alexa Skill → AgentCore agent → *MCP tool call over the tunnel* → our server reads Crew status/approvals, classifies risk, and speaks a decision back.
+- **Approve flow (safety-critical):** "approve it" arms a confirmation (nothing happens); an explicit "yes" on the second call resolves the approval on the Crew Gateway. A single stray word never acts.
+- **Filter flow (Ambient Awareness):** each pending approval is classified — rule-certain low-risk is silently passed under trust, catastrophic is silently blocked, everything else is surfaced by voice, highest risk first. Every outcome is written to the audit log.
 
-Full specs live in [`.kiro/specs/kirowhisper/`](.kiro/specs/kirowhisper/)
-(requirements → design → tasks), authored with Kiro's spec-driven workflow.
+**Key points.**
+- **The intelligence is ours; the voice transport is swappable.** Risk classification, the three-bucket policy, the two-step confirmation, and the spoken wording all live in the MCP server. The Alexa side only turns speech into tool calls and back.
+- **Amazon Bedrock** (Nova, `us-east-1`) does nuanced risk classification and voice-friendly summaries. Deterministic rules run first and always win in the safe direction; Bedrock is consulted only when the rules are inconclusive, and returns UNKNOWN on any doubt.
+- **Fail-safe by default:** anything uncertain is surfaced to you, never silently approved.
+- The server runs **stateless** (each request stands alone), so a long-lived Alexa agent behind a tunnel never hits a dead MCP session.
+
+## How Kiro was used
+
+KiroWhisper was built **entirely within Kiro** using its spec-driven development workflow:
+
+- **Spec-first** — requirements → design → tasks were authored in Kiro before code, and are committed at [`.kiro/specs/kirowhisper/`](.kiro/specs/kirowhisper/) (`requirements.md`, `design.md`, `tasks.md`).
+- **Requirements** — user stories with acceptance criteria that map directly to the safety guarantees (three-bucket filter, two-step approval, fail-safe surfacing).
+- **Design** — the architecture above, the risk model, and the non-functional requirements (voice-latency budget, secrets masking) were fixed in the design doc first.
+- **Implementation** — tasks executed against the specs, each verified by tests; **157 automated tests** map back to the requirements.
+- **Kiro Crew** — the autonomous agent this project supervises is itself a Kiro product, driven at runtime through its Gateway.
+
+## Project structure
+
+```
+kirowhisper/
+├── .kiro/specs/kirowhisper/   # Kiro specs: requirements → design → tasks
+├── src/kirowhisper/
+│   ├── mcp_server.py          # the 13 MCP tools (the voice surface)
+│   ├── ambient.py             # Ambient Awareness: the three-bucket engine
+│   ├── risk.py                # deterministic risk rules (+ catastrophic deny)
+│   ├── policy.py              # pass / block / surface decision policy
+│   ├── summarizer.py          # voice-friendly text (Bedrock + fallback)
+│   ├── gateway_client.py      # Kiro Crew Gateway REST client
+│   ├── bedrock.py             # Amazon Bedrock (Converse / Nova)
+│   ├── audit.py               # append-only decision log + secrets masking
+│   └── config.py              # env-driven config (no secrets in source)
+├── tests/                     # 157 tests (rules, policy, tools, audit, ...)
+├── scripts/                   # dev-only helpers (seed/cleanup test slots)
+└── docs/                      # FRICTION_LOG, PRODUCT_FEEDBACK, USE_CASES
+```
 
 ---
 
