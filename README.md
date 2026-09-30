@@ -297,4 +297,4 @@ See also: [Product Feedback](docs/PRODUCT_FEEDBACK.md) ·
 
 ## License
 
-[MIT](LICENSE).
+[Apache License 2.0](LICENSE).
