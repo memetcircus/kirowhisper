@@ -387,10 +387,60 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
 
 ---
 
+### F21 — On a real Echo, the model rewrote our confirm question into a statement and dropped the "yes"
+- **Task:** The safety-critical moment — two-step approval by voice on a physical Echo
+  Dot Max: "approve it" → "are you sure?" → "yes" → applied.
+- **Steps:** Ran the full flow on-device. `approve_top`'s first call returned a summary
+  plus a confirming question ending in "?" (verified server-side: "…To confirm, are you
+  sure you want to approve this?").
+- **Expected:** The "?" keeps the mic open (endsWithQuestion, see F15), the user says
+  "yes", the second `approve_top` applies it.
+- **Actual:** Alexa+ **paraphrased our whole reply** into a period-ending command — the
+  device spoke "…please say yes to go ahead." (no "?"), so the bridge closed the session
+  and the user's "yes" went to Alexa+, not the skill; nothing applied. This is F15
+  recurring, but worse: even a reply that *did* end in "?" got reworded once we also
+  handed the model a long summary sentence to read. The decision correctly stayed
+  "Needs approval" (safety held — a single "approve it" never applied it), but the user
+  could not complete the approval.
+- **Severity:** High (the product's core safety action was uncompletable by voice on the
+  real device).
+- **Workaround:** Stop giving the model anything to rewrite on the confirm turn. The
+  user already heard *what* the decision is (from `get_pending_decisions`/`explain_top`),
+  so the confirm turn no longer repeats the summary — it is now a single bare yes/no
+  question ("Say yes to approve it, or no to keep it waiting?"), and the tool description
+  tells the model to speak it verbatim. Verified live on the Echo Dot Max: "approve it"
+  → the bare question kept the mic open → "yes" reached the skill → the file was actually
+  deleted (confirmed in the audit log as `user approved (voice, top)` and by the file
+  being gone).
+- **Suggestion:** Same as F15 — a first-class "this reply expects an answer, keep the
+  session open" signal on a tool result would end this whole class of bug. Inferring it
+  from a trailing "?" fails the moment a generative voice layer rephrases the text.
+
+### F22 — No polite way to end the session ("thank you" doesn't close it)
+- **Task:** End the conversation naturally on the device after finishing.
+- **Steps:** Said "thank you" to close; then, because the mic stays open (every read-only
+  reply ends in a question by design, F19), the assistant treated it as a new turn and
+  kept going. Said "stop" instead.
+- **Expected:** A natural "thanks, that's all" ends the session.
+- **Actual:** "thank you" is not a built-in intent and our replies keep the mic open, so
+  it looped. **"stop" worked cleanly** ("Okay, goodbye" → session closed) via Alexa's
+  built-in `AMAZON.StopIntent`, which the bridge handles.
+- **Severity:** Low (a standard exit exists; only the polite phrasing is unhandled).
+- **Workaround / decision:** Left as-is by choice. "stop"/"cancel"/"exit" are the
+  platform-standard ways to end a skill and they work; adding a bespoke "thank you =
+  goodbye" intent would cost a new tool + the F17 four-step deploy and risks
+  false-closing mid-sentence ("thank you, now approve it"). Not worth it against a
+  feature freeze. Documented as a conscious product decision.
+- **Suggestion:** A lightweight, built-in "polite close" set (thanks / that's all /
+  never mind) that the platform maps to StopIntent would make voice skills feel more
+  natural without each skill re-implementing it.
+
+---
+
 ## Severity tally
-- High: F1, F2, F8, F11, F12, F13, F14, F15, F17
+- High: F1, F2, F8, F11, F12, F13, F14, F15, F17, F21
 - Medium: F3, F4, F5, F7, F9, F10, F18, F19
-- Low: F6, F16, F20
+- Low: F6, F16, F20, F22
 
 Most frictions were about **discovery** (how to talk to the Gateway, which action
 string, where the pending approval lives) rather than capability gaps — the
@@ -420,4 +470,13 @@ adding voice tools (`explain_top`, `check_task_health`, `describe_session`) and 
 conversation open* (F19 — statement-ending replies closed the session), and multiple
 tools must *agree on the facts* (F20 — two session counts from two endpoints). None were
 capability gaps; each was a seam between the deterministic server and the model-driven
-voice surface, and each fix pushed correctness back to the source.
+voice surface, and each fix pushed correctness back to the source. F21–F22 are the
+"last mile" again, this time surfaced only by testing on a **physical Echo Dot Max**:
+the generative voice layer rewrote our safety-critical confirm question into a statement
+and swallowed the user's "yes" (F21 — fixed by leaving the model nothing to reword), and
+there is no polite spoken close, only the platform's "stop" (F22 — left as a conscious
+decision). The throughline across F13–F22: the moment a generative model sits between
+your tool and the speaker, never trust it to preserve wording, keep a turn open, or
+relay a value — make the safety-critical behavior deterministic and verify the real
+effect at the source. The whole flow, including the two-step approval, was ultimately
+verified end-to-end on a real Echo Dot Max, with the deletion confirmed in the audit log.
