@@ -6,6 +6,32 @@ build with it again.
 
 ---
 
+## Kiro (IDE + spec-driven development)
+
+**What we used it for.** Kiro was our development environment for the entire project —
+not just an editor, but the *method*. We used its **spec-driven workflow**: wrote
+`requirements.md`, then `design.md`, then `tasks.md` (committed in the repo at
+`.kiro/specs/kirowhisper/`), and implemented against them. The 13 MCP tools, the
+three-bucket Ambient Awareness design, and the risk model all trace back to those specs.
+
+**What worked well.** Spec-first genuinely paid off for a safety-critical product: forcing
+requirements and a design before code kept the risk rules and the two-step-approval
+guarantee explicit and testable (157 tests map back to the requirements). The paper trail
+also made the friction log natural to keep — every seam we hit had a spec to check against.
+Kiro drove the edits, ran the tests, and managed the git workflow tightly throughout.
+
+**What needs work.** The credit/usage visibility gap (see FR1): the IDE shows a running
+credit balance, but there's no in-conversation or API way to ask "how much is left,"
+which matters for an eyes-free operator. Otherwise the spec workflow was smooth.
+
+**Onboarding.** Fast — describe the feature, let Kiro scaffold the spec, iterate.
+
+**Would we build with it again?** Yes. For a product where correctness and safety matter,
+spec-driven development in Kiro was the right discipline, and the committed specs are
+themselves evidence of how the project was built.
+
+---
+
 ## Kiro Crew (Gateway REST API)
 
 **What we used it for.** The whole point of KiroWhisper: supervising an autonomous
@@ -223,6 +249,7 @@ to a dedicated STT/TTS (or Crew's built-in Piper/Transcribe voice).
 
 | Tool | Reuse? | One-line takeaway |
 |---|---|---|
+| Kiro (IDE, spec-driven) | ✅ | Built the whole project; spec-first was the right discipline for a safety-critical voice product. |
 | Kiro Crew Gateway | ✅ | Great primitive; document the client auth shape. |
 | Amazon Bedrock (Converse) | ✅ | Model-agnostic Converse made "rules + model" cheap and clean. |
 | MCP Python SDK | ✅ | Streamable HTTP is easy; pick stateless mode behind a tunnel. |
