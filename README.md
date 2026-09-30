@@ -50,13 +50,15 @@ run it. We've made evaluation straightforward:
   [`src/kirowhisper/`](src/kirowhisper/) — `mcp_server.py` (tools), `ambient.py`
   (the three-bucket risk filter), `risk.py`, `policy.py`, `gateway_client.py` (real Kiro
   Crew Gateway calls), `summarizer.py` (Bedrock). The track's tech is **called at
-  runtime**, not just named: every tool drives Crew + Bedrock. Run the tests with
+  runtime**, not just named: the tools drive Crew + Bedrock. Run the tests with
   `python -m pytest` (157 passing).
 - **What we built on the tools we used:** see [docs/PRODUCT_FEEDBACK.md](docs/PRODUCT_FEEDBACK.md)
   and the [Friction Log](docs/FRICTION_LOG.md) (F1–F22) — a detailed, actionable record
   of every seam we hit across Kiro Crew, Bedrock, the MCP SDK, and Bedrock AgentCore.
 - **Want a live look?** We can provide temporary access to the running skill on request
   (the Echo Dot Max is a widely available device, not custom hardware).
+
+See the [Architecture](#architecture) section below for how the pieces connect.
 
 ---
 
