@@ -292,7 +292,10 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         description=(
             "Approve the highest-risk waiting decision — no request id needed. "
             "EVERY approval takes TWO calls to this tool. First call: it returns a "
-            "confirmation question and applies NOTHING. When the user then confirms "
+            "short confirmation question and applies NOTHING. Speak that question "
+            "back to the user WORD FOR WORD — it ends in a question mark on purpose so "
+            "the microphone stays open; do NOT rephrase it, shorten it, or turn it into "
+            "a statement, or the user's 'yes' will be lost. When the user then confirms "
             "(says yes, approve, confirm, go ahead, do it), you MUST CALL approve_top "
             "AGAIN — that second call is what actually approves. Speaking a "
             "confirmation without calling the tool again does nothing. Only skip the "
@@ -319,19 +322,17 @@ def build_server(services: KiroWhisperServices) -> MCPServer:
         deadline = pending_confirmations.get(rid)
         if deadline is None or deadline <= time.monotonic():
             pending_confirmations[rid] = time.monotonic() + confirmation_ttl_s
-            summary = svc.summarizer.approval_summary(top.approval, top.risk, fast=True)
-            extra = (
-                " This is high-risk and may be irreversible."
-                if top.risk.level == RiskLevel.HIGH
-                else ""
-            )
-            # Keep this SHORT and end with a bare yes/no question. If the spoken
-            # reply doesn't end in "?", the Alexa bridge (endsWithQuestion) closes the
-            # session and the user's confirming "yes" goes to Alexa+, not this skill —
-            # so the second approve_top never fires and nothing is applied. A short,
-            # single question is the wording the model is least likely to rewrite into
-            # a period-ending command.
-            return f"{summary}.{extra} To confirm, are you sure you want to approve this?"
+            # The confirm turn must be ONE bare yes/no question and nothing else. The
+            # user already heard *what* the decision is (from get_pending_decisions /
+            # explain_top); repeating the summary here just gives the voice model room
+            # to paraphrase the whole reply into a period-ending command, which drops
+            # the "?" and makes the Alexa bridge close the session (endsWithQuestion) —
+            # so the confirming "yes" never reaches the skill and nothing applies
+            # (observed live on a real Echo, Friction Log F15/F21). Minimal wording
+            # the model has nothing to usefully reword, still ending in "?":
+            if top.risk.level == RiskLevel.HIGH:
+                return "This one is high risk. Say yes to approve it, or no to keep it waiting?"
+            return "Say yes to approve it, or no to keep it waiting?"
         pending_confirmations.pop(rid, None)
 
         taken = svc.ambient.take_pending(rid)

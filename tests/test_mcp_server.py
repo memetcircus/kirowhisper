@@ -257,7 +257,7 @@ async def test_approve_top_confirms_high_risk_then_approves_it_first(tmp_path: P
     server = build_server(svc)
 
     first = await _call(server, "approve_top")
-    assert "high-risk" in first.lower()
+    assert "high risk" in first.lower()
     assert first.endswith("?")
     assert gw.approved == []
     assert any(p.approval.request_id == "high1" for p in ambient.pending_decisions())
