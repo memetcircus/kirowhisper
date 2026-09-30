@@ -1,3 +1,4 @@
+
 # Friction Log
 
 Specific frictions hit while building KiroWhisper, kept as we went. Each entry:
