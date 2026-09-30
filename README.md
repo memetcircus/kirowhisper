@@ -147,13 +147,21 @@ python -m kirowhisper
 # serves the MCP tools over stateless Streamable HTTP on 127.0.0.1:8000/mcp
 ```
 
-**MCP tools exposed:** `get_status`, `get_pending_decisions`, `approve_top`,
-`reject_top`, `approve`, `reject`, `trust_session`, `summarize`.
+**MCP tools exposed (13):**
+- **Discover:** `help` — a spoken "what can you do" menu for eyes-free users.
+- **Check in:** `get_status` (while-you-were-away digest), `check_task_health`
+  (which task failed / how the tasks are doing), `describe_session` (what a session is
+  working on).
+- **Decide:** `get_pending_decisions` (reads the top decision), `explain_top` (why it's
+  risky), `approve_top` / `reject_top` (act on it), `approve_all_safe` (clear the
+  rule-certain safe backlog), `trust_session`, and low-level `approve` / `reject` by id.
+- **Summarize:** `summarize` (a task result or diff).
 
 The voice path is a two-call flow that works without an elicitation back-channel:
 `get_pending_decisions` reads the highest-risk decision aloud, then `approve_top` /
 `reject_top` acts on it with no request id. `approve_top` always takes two calls: the
-first only asks the user to confirm, the second applies it.
+first only asks the user to confirm, the second applies it. Read-only replies end with a
+question so the Alexa mic stays open for a natural, multi-turn oversight conversation.
 
 ### 2. Expose it to AWS
 
@@ -178,9 +186,16 @@ git clone https://github.com/KayLerch/alexa-skill-mcp-bridge
 cd alexa-skill-mcp-bridge && npm install
 # in .env:  BRIDGE_MCP_URL=https://<name>.trycloudflare.com/mcp
 npm run generate        # builds the interaction model from our live MCP tools
+npm run skill:deploy    # deploys the Alexa Skill (interaction model -> Alexa NLU)
 npm run deploy          # CDK: AgentCore runtime + skill Lambda (us-east-1)
-npm run skill:deploy    # deploys the Alexa Skill
 ```
+
+> **Adding or changing a tool needs a cold runtime.** The AgentCore agent snapshots
+> the MCP `tools/list` once per warm session and the container can outlive a redeploy,
+> so a newly added tool stays invisible until the runtime is recreated. After changing
+> tools, run `npm run destroy && npm run deploy` (then `npm run skill:deploy`) so a cold
+> container re-lists them. This cost us hours before we understood it — see
+> [Friction Log](docs/FRICTION_LOG.md) F17.
 
 KiroWhisper relies on a few changes to the bridge that we made while testing on real
 Alexa (see [Friction Log](docs/FRICTION_LOG.md) F11–F15):

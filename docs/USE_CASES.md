@@ -219,6 +219,18 @@ Crew hands over all approvals equally. The intelligence is in OUR layer:
 - **Spike:** ✅ `task_complete` also arrives on failure; `GET /api/spawn/<id>` state.
 - **Priority:** CORE (part of the result loop)
 
+## UC-13 — Discoverability (the eyes-free menu)
+- **Actor:** Deniz. **Trigger:** "what can you do" / "help" / "what can I say."
+- **Flow:** The system speaks a short, grouped menu of what it can do — check in / hear
+  what needs you / act on it / dig in — with the exact phrases to say, ending on a
+  question so the user can try one immediately.
+- **Why it matters:** a sighted user can scan the tools in the IDE; a blind user cannot.
+  With 13 tools, an eyes-free user needs a spoken way to discover them. This is the
+  accessibility counterpart of a visible menu — the curb-cut applied to onboarding.
+- **Status:** ✅ Built and **verified live on Alexa** (`help` tool; deterministic text,
+  no Bedrock, so it's instant and never goes silent). Keeps the mic open for a follow-up.
+- **Priority:** CORE (discoverability of an eyes-free product)
+
 ---
 
 # Starting new tasks — scope decision
@@ -232,7 +244,7 @@ Crew hands over all approvals equally. The intelligence is in OUR layer:
 # Scope summary (requirement priority)
 - **CORE (built + verified live on Alexa):** Ambient Awareness + UC-1 (status digest),
   UC-2 (approve with two-step confirmation), UC-3 (reject), UC-6 (session trust,
-  rule-certain only).
+  rule-certain only), UC-13 (spoken "what can you do" menu for eyes-free discoverability).
 - **DIFFERENTIATOR (built + verified live on Alexa):** UC-7 and UC-10 — context-aware,
   multi-turn oversight via `check_task_health` ("which task failed"), `describe_session`
   ("tell me about that session"), and `explain_top` ("why is that risky"); plus UC-11
@@ -248,8 +260,9 @@ the product.
 1. HOOK (0-30s): the maker's own pain — an autonomous Crew, dozens of approvals, the
    fatigue of turning back to the screen; for a blind developer, unusable by voice.
 2. AMBIENT AWARENESS (30-95s): on a real Echo / the Alexa console — "Alexa, open
-   kiro whisper" -> "get status" (the "while you were away" digest: *asked for two,
-   I passed one as safe, one is waiting*) -> "what needs my decision" reads the
+   kiro whisper" -> optionally "what can you do" (the eyes-free menu) -> "get status"
+   (the "while you were away" digest: *asked for two, I passed one as safe, one is
+   waiting*) -> "what needs my decision" reads the
    decision aloud -> "why is that risky" (`explain_top` — the guardrail's own reason) ->
    "approve it" -> **two-step confirmation** -> "yes" -> applied. All verified live
    against the real backend.
