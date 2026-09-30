@@ -27,6 +27,33 @@ Bedrock AgentCore, Strands, Kiro Crew).
 
 ---
 
+## For judges — how to evaluate this
+
+KiroWhisper is a **live, single-operator system**, not a hosted web app: it binds one
+running Kiro Crew instance (on the maker's machine), a locally served MCP server exposed
+through a tunnel, and an Alexa skill + Bedrock AgentCore runtime deployed in the maker's
+AWS account, tied to the maker's Amazon account. Cloning the repo alone therefore won't
+reproduce a running deployment, and per the hackathon rules judges are not required to
+run it. We've made evaluation straightforward:
+
+- **Demo video (primary):** shows the whole flow **functioning on a real Echo Dot Max**
+  — discovery, the "while you were away" digest, "which task failed", a context-aware
+  session description, and the two-step voice approval actually deleting a file, with the
+  Kiro Crew IDE visible so you can see the decision resolve.
+- **Code (read it directly):** the MCP server and its 13 tools are in
+  [`src/kirowhisper/`](src/kirowhisper/) — `mcp_server.py` (tools), `ambient.py`
+  (the three-bucket risk filter), `risk.py`, `policy.py`, `gateway_client.py` (real Kiro
+  Crew Gateway calls), `summarizer.py` (Bedrock). The track's tech is **called at
+  runtime**, not just named: every tool drives Crew + Bedrock. Run the tests with
+  `python -m pytest` (157 passing).
+- **What we built on the tools we used:** see [docs/PRODUCT_FEEDBACK.md](docs/PRODUCT_FEEDBACK.md)
+  and the [Friction Log](docs/FRICTION_LOG.md) (F1–F22) — a detailed, actionable record
+  of every seam we hit across Kiro Crew, Bedrock, the MCP SDK, and Bedrock AgentCore.
+- **Want a live look?** We can provide temporary access to the running skill on request
+  (the Echo Dot Max is a widely available device, not custom hardware).
+
+---
+
 ## The sharp edge: Ambient Awareness
 
 Voice cannot be scanned like a screen. On a screen you skim 20 approvals in five
