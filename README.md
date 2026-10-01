@@ -219,7 +219,12 @@ kirowhisper/
 ### Prerequisites
 - Python 3.12+
 - A running [Kiro Crew](https://github.com/kirodotdev/KiroCrew) Gateway on
-  `localhost:5476` (the `kirocrew` CLI on your `PATH`, signed in).
+  `localhost:5476` (the `kirocrew` CLI on your `PATH`, signed in). KiroWhisper fetches a
+  fresh token automatically with `kirocrew token` and sends the `Origin` header the
+  Gateway requires (equal to its base URL) — no extra setup, as long as the CLI is on
+  your `PATH` and signed in. If your Gateway runs elsewhere or uses a different token
+  command, override `KIROWHISPER_GATEWAY_URL` / `KIROWHISPER_TOKEN_CMD` (see
+  **Configuration** below).
 - AWS credentials with Bedrock model access in `us-east-1` (optional for the MCP
   server — a deterministic fallback works without it; required for the Alexa path).
 
@@ -295,8 +300,11 @@ Then enable testing in the Alexa developer console (or on your Echo) and say
 the skill.
 
 **Configuration** (all optional, via environment):
-`KIROWHISPER_GATEWAY_URL`, `KIROWHISPER_TOKEN_CMD`, `AWS_REGION`,
-`KIROWHISPER_BEDROCK_FAST_MODEL`, `KIROWHISPER_POLL_INTERVAL`.
+`KIROWHISPER_GATEWAY_URL` (default `http://localhost:5476`),
+`KIROWHISPER_TOKEN_CMD` (default `kirocrew token`),
+`KIROWHISPER_GATEWAY_TOKEN` (an explicit token that overrides the command),
+`AWS_REGION`, `KIROWHISPER_AWS_PROFILE`, `KIROWHISPER_BEDROCK_FAST_MODEL`,
+`KIROWHISPER_POLL_INTERVAL`.
 
 ### Developer tool: web voice console (not the product surface)
 
