@@ -51,6 +51,12 @@ and `kirocrew token` gives a clean way to authenticate a local client.
   a cookie or `Authorization` header) *and* an `Origin` header equal to the base URL,
   or it returns `403 Token required` / `Forbidden`. A short "talking to the Gateway
   from your own code" doc would save hours.
+- **The token expires silently on a long-running client.** `kirocrew token` returns a
+  short-lived JWT, and a server that fetches it once at startup starts getting `403
+  Forbidden` on every call hours later with no obvious cause (a tool "succeeds" but the
+  spoken answer carries a forbidden error). A documented token TTL — and ideally a
+  refresh hint on the 401/403 response — would let a client refresh proactively instead
+  of discovering expiry mid-session (see Friction Log F23).
 - **The approve action string is a silent trap.** The resolve endpoint accepts
   `action: "approved"` (past tense). Sending `"approve"` returns `{"ok": true}` but
   **silently rejects** the tool. A validation error, or accepting both, would prevent
@@ -193,6 +199,13 @@ two-step approve all worked by voice against the real backend.
   session so follow-ups miss the skill (F19). A short "checklist for adding a tool"
   (regen model + author overrides, redeploy skill + Lambda, recreate the runtime, make
   replies end in a question) would turn a day of debugging into a five-minute routine.
+- **"Keep the mic open" is inferred from a trailing "?", which is too brittle.** The
+  bridge decides whether to keep listening by testing the reply for a final "?". A
+  confirmation worded as a statement ("please say yes to confirm.") closed the mic
+  mid-approval, stranding the user on the safety-critical turn. We fixed it in our bridge
+  fork by also recognizing an explicit spoken yes/no prompt (contributed back — Friction
+  Log F24). A first-class "this reply expects an answer" flag on a tool result would
+  retire this whole class of bug instead of guessing from punctuation.
 
 **Onboarding.** The bridge's own docs and CLI (`npm run chat --remote`) made it possible
 to reproduce the deployed path locally, which was essential — the fastest way to tell
