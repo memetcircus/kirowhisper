@@ -237,15 +237,32 @@ python -m kirowhisper
 # serves the MCP tools over stateless Streamable HTTP on 127.0.0.1:8000/mcp
 ```
 
-**MCP tools exposed (13):**
-- **Discover:** `help` — a spoken "what can you do" menu for eyes-free users.
-- **Check in:** `get_status` (while-you-were-away digest), `check_task_health`
-  (which task failed / how the tasks are doing), `describe_session` (what a session is
-  working on).
-- **Decide:** `get_pending_decisions` (reads the top decision), `explain_top` (why it's
-  risky), `approve_top` / `reject_top` (act on it), `approve_all_safe` (clear the
-  rule-certain safe backlog), `trust_session`, and low-level `approve` / `reject` by id.
-- **Summarize:** `summarize` (a task result or diff).
+**MCP tools exposed** — `MCP spec 2025-11-25 · Streamable HTTP · 13 tools`
+(grouped by what the user is doing; this is the live `tools/list`, printable any
+time with `python scripts/show_mcp_tools.py`):
+
+```text
+Discover
+  help                   spoken "what can you do" menu, for eyes-free use
+
+Check in
+  get_status             while-you-were-away digest
+  check_task_health      which task failed / how tasks are doing
+  describe_session       what a session is working on
+
+Decide
+  get_pending_decisions  read the highest-risk decision aloud
+  explain_top            why that decision is risky
+  approve_top            approve it (two-step confirm)
+  reject_top             reject it
+  approve_all_safe       clear the rule-certain safe backlog
+  trust_session          trust a session going forward
+  approve                approve a specific request by id
+  reject                 reject a specific request by id
+
+Summarize
+  summarize              a task result or diff, voice-friendly
+```
 
 The voice path is a two-call flow that works without an elicitation back-channel:
 `get_pending_decisions` reads the highest-risk decision aloud, then `approve_top` /
