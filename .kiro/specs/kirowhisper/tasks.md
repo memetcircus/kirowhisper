@@ -41,117 +41,134 @@
   `PendingDecision`, `AuditEntry` (dataclass/pydantic). _(done in 1.1)_
   - _Design: Data models_
 
-- [ ] 2.2 `audit.py`: append-only local log (ts, id, risk, decision, reason).
+- [x] 2.2 `audit.py`: append-only local log (ts, id, risk, decision, reason).
   Secret masking. Read API for summaries.
   - _Requirements: R10, NFR-1; Design: Component 7_
 
 ## Phase 3 — Risk Classifier  [CORE — the project's intelligence]
 
-- [ ] 3.1 `risk.py` (a) deterministic rule layer: `is_read_only`->LOW,
+- [x] 3.1 `risk.py` (a) deterministic rule layer: `is_read_only`->LOW,
   `is_shell`->>=HIGH, destructive patterns (`rm -rf`, `DROP`, `force`,
   `.env`/secret, broad deletion)->HIGH, unclear->defer. Rules tighten one way only.
   - _Requirements: R2.2, R2.3, R2.4, R2.5_
 
-- [ ] 3.2 `risk.py` (b) Bedrock layer: raw tool+purpose+diff -> structured risk +
+- [x] 3.2 `risk.py` (b) Bedrock layer: raw tool+purpose+diff -> structured risk +
   reason. Error/unsure -> UNKNOWN. Called only when rules say "unclear."
   - _Requirements: R2.1, R2.6; Design: Component 3_
 
-- [ ] 3.3 Risk classifier unit tests: known dangerous/safe diff sample set; rule
+- [x] 3.3 Risk classifier unit tests: known dangerous/safe diff sample set; rule
   layer classifies correctly; falls to UNKNOWN on Bedrock error (fail-safe).
   - _Requirements: R2.5, NFR-1_
 
 ## Phase 4 — Summarizer  [CORE]
 
-- [ ] 4.1 `summarizer.py`: Bedrock voice-friendly summaries — approval, status,
+- [x] 4.1 `summarizer.py`: Bedrock voice-friendly summaries — approval, status,
   ambient. Short, priority-ordered, not raw diff, <=2-3 options.
   - _Requirements: R4.4, NFR-3; Design: Component 4_
 
-- [ ] 4.2 Summarizer tests: long diff -> short voice text; no secret leakage.
+- [x] 4.2 Summarizer tests: long diff -> short voice text; no secret leakage.
   - _Requirements: NFR-1, NFR-3_
 
 ## Phase 5 — Ambient Awareness Engine  [CORE — the heart]
 
-- [ ] 5.1 `ambient.py` polling loop (asyncio, ~2-3s): detect new approvals
+- [x] 5.1 `ambient.py` polling loop (asyncio, ~2-3s): detect new approvals
   idempotently (remember seen). Gateway down -> retry, NO auto-approve.
   - _Requirements: R1.1, R1.3, R1.4_
 
-- [ ] 5.2 Decision policy (`policy.decide`): LOW+trust->AUTO_APPROVE,
+- [x] 5.2 Decision policy (`policy.decide`): LOW+trust->AUTO_APPROVE,
   explicit-deny->AUTO_BLOCK, HIGH/UNKNOWN->SURFACE. Conservative: unsure->SURFACE.
   Write decision to audit, apply via gateway.resolve.
   - _Requirements: R3.1, R3.2, R3.3, R3.4, R3.5_
 
-- [ ] 5.3 SURFACE queue + snapshot API (how many AUTO/BLOCK/SURFACE) — the source
+- [x] 5.3 SURFACE queue + snapshot API (how many AUTO/BLOCK/SURFACE) — the source
   of the status summary ("I passed 19...").
   - _Requirements: R4.3_
 
-- [ ] 5.4 Ambient engine tests (fake Gateway): three-bucket decisions correct;
+- [x] 5.4 Ambient engine tests (fake Gateway): three-bucket decisions correct;
   idempotency; fail-safe (Gateway/Bedrock error -> SURFACE, never silent approve).
   - _Requirements: R1.4, R3.3, R3.5, NFR-1_
 
 ## Phase 6 — MCP Server  [CORE — Alexa+ runtime requirement]
 
-- [ ] 6.1 `mcp_server.py`: MCP Python SDK, **Streamable HTTP**. Tools:
+- [x] 6.1 `mcp_server.py`: MCP Python SDK, **Streamable HTTP**. Tools:
   `get_status`, `get_pending_decisions`, `approve`, `reject`, `trust_session`,
   `summarize`. Each tool calls the relevant core service (real MCP at runtime).
   - _Requirements: R12.1, R12.2; Design: Component 5_
+  - _Grew to 13 tools in the voice-feature rounds: added `help`, `check_task_health`,
+    `describe_session`, `explain_top`, `approve_top`/`reject_top`, `approve_all_safe`._
 
-- [ ] 6.2 `approve` tool: return double-confirm info if HIGH; on clear approval
+- [x] 6.2 `approve` tool: return double-confirm info if HIGH; on clear approval
   gateway.resolve("approved"). `reject` tool: skip/pause/cancel handling.
   - _Requirements: R5.1, R5.2, R6.1, R6.2, R6.3, R6.4, R6.5_
+  - _The voice path uses `approve_top`/`reject_top` (two-call confirm, no request id);
+    `approve`/`reject` by id remain for completeness._
 
-- [ ] 6.3 Verify the MCP server with MCP Inspector or a test client (tool
+- [x] 6.3 Verify the MCP server with MCP Inspector or a test client (tool
   discovery + call + spec 2025-11-25 compliance).
   - _Requirements: R12.2_
+  - _Verified live through the Alexa bridge's `chat` client and on a real Echo Dot Max._
 
 ## Phase 7 — Voice Interface (simulation)  [CORE]
 
-- [ ] 7.1 `voice_sim/` web interface: microphone -> STT -> MCP tool call ->
+- [x] 7.1 `voice_sim/` web interface: microphone -> STT -> MCP tool call ->
   response -> TTS. Low-latency STT/TTS. The user's own voice. No ElevenLabs.
   - _Requirements: R11.1, R11.3, NFR-2_
+  - _Shipped as a developer aid; the real voice surface became Alexa+ on a physical
+    Echo Dot Max via the alexa-skill-mcp-bridge (beyond the planned simulation)._
 
-- [ ] 7.2 Proactive notification: when ambient surfaces something, the interface
+- [x] 7.2 Proactive notification: when ambient surfaces something, the interface
   triggers a spoken alert. Simulation honestly labeled in the demo.
   - _Requirements: R7.1, R7.2, R7.3, R11.4_
 
-- [ ] 7.3 End-to-end rehearsal: breakfast scenario (Crew autonomous -> ambient
+- [x] 7.3 End-to-end rehearsal: breakfast scenario (Crew autonomous -> ambient
   filters -> one real decision surfaced -> approve by voice -> file changes).
   - _Requirements: R4, R5, R7; Design: Flow B_
+  - _Verified end-to-end on a real Echo Dot Max: two-step voice approval deleted a file,
+    confirmed in the audit log._
 
 ## Phase 8 — Differentiators  [DIFF — once core works]
 
-- [ ] 8.1 Session trust (`trust_session`): LOW auto-approve; HIGH/UNKNOWN still surface.
+- [x] 8.1 Session trust (`trust_session`): LOW auto-approve; HIGH/UNKNOWN still surface.
   - _Requirements: R8_
 
 - [ ] 8.2 Context tracking + clarifying question: multi-task reference mapping;
   `waiting_for_input`/`has_options` -> present options by voice.
   - _Requirements: R9_
+  - _Partially shipped: `describe_session` picks the most relevant session (running >
+    awaiting > rest). The full clarifying back-and-forth (UC-9) was consciously cut as
+    over-engineering against the feature freeze — see PRODUCT_FEEDBACK._
 
-- [ ] 8.3 Standup summary + failure notification: multi-task status + failure.
+- [x] 8.3 Standup summary + failure notification: multi-task status + failure.
   - _Requirements: R4.2, R7.4 (UC-10, UC-12)_
+  - _Shipped as `check_task_health` ("which task failed / how tasks are doing")._
 
 ## Phase 9 — Hackathon deliverables  [CORE — points]
 
-- [ ] 9.1 README: clear setup + run instructions; architecture; honest simulation
+- [x] 9.1 README: clear setup + run instructions; architecture; honest simulation
   disclosure. Visible open-source LICENSE (shown in About).
   - _Requirements: NFR-5, R12.3_
 
-- [ ] 9.2 Product Feedback doc: for each tool/SDK used (Kiro Crew, MCP SDK,
+- [x] 9.2 Product Feedback doc: for each tool/SDK used (Kiro Crew, MCP SDK,
   Bedrock, STT/TTS) — what worked / what was hard / onboarding / would you reuse.
   - _Requirements: NFR-5_
 
-- [ ] 9.3 Friction Log: frictions encountered during development (auth gotcha,
-  action="approved", proactive-speech limitation, etc.) — 10% bonus.
+- [x] 9.3 Friction Log: frictions encountered during development (auth gotcha,
+  action="approved", proactive-speech limitation, etc.) — 10% bonus. (F1–F24.)
   - _Requirements: NFR-5_
 
-- [ ] 9.4 <3 min demo video: breakfast scenario; human story + genuinely working
+- [x] 9.4 <3 min demo video: breakfast scenario; human story + genuinely working
   system; curb-cut message. Simulation disclosed honestly.
   - _Requirements: NFR-5, R11.4_
+  - _~2 min, shot on a real Echo Dot Max; the two-step voice approval deletes a file live._
 
 ## Phase 10 — Future (v2)  [v2]
 
 - [ ] 10.1 Mid-task redirect (UC-8): intervene in a running slot.
 - [ ] 10.2 Voice-starting new tasks (out of scope — commodity risk).
-- [ ] 10.3 Real Alexa+ MCP add-on (if the toolkit opens) / real Echo via Kay bridge.
+- [~] 10.3 Real Alexa+ MCP add-on (if the toolkit opens) / real Echo via Kay bridge.
+  - _Done ahead of plan: the real Echo path works today via the alexa-skill-mcp-bridge
+    (Alexa Skill + Bedrock AgentCore). The first-party Alexa+ MCP add-on is not public
+    yet, so that specific integration remains future work._
 
 ---
 
