@@ -46,14 +46,15 @@ run it. We've made evaluation straightforward:
   — discovery, the "while you were away" digest, "which task failed", a context-aware
   session description, and the two-step voice approval actually deleting a file, with the
   Kiro Crew IDE visible so you can see the decision resolve.
-- **Code (read it directly):** the MCP server and its 13 tools are in
+- **Code (read it directly):** the MCP server and its
+  [13 tools](#mcp-tools-exposed) are in
   [`src/kirowhisper/`](src/kirowhisper/) — `mcp_server.py` (tools), `ambient.py`
   (the three-bucket risk filter), `risk.py`, `policy.py`, `gateway_client.py` (real Kiro
   Crew Gateway calls), `summarizer.py` (Bedrock). The track's tech is **called at
   runtime**, not just named: the tools drive Crew + Bedrock. Run the tests with
   `python -m pytest` (157 passing).
 - **What we built on the tools we used:** see [docs/PRODUCT_FEEDBACK.md](docs/PRODUCT_FEEDBACK.md)
-  and the [Friction Log](docs/FRICTION_LOG.md) (F1–F22) — a detailed, actionable record
+  and the [Friction Log](docs/FRICTION_LOG.md) (F1–F24) — a detailed, actionable record
   of every seam we hit across Kiro Crew, Bedrock, the MCP SDK, and Bedrock AgentCore.
 - **Want a live look?** We can provide temporary access to the running skill on request
   (the Echo Dot Max is a widely available device, not custom hardware).
@@ -237,9 +238,10 @@ python -m kirowhisper
 # serves the MCP tools over stateless Streamable HTTP on 127.0.0.1:8000/mcp
 ```
 
-**MCP tools exposed** — `MCP spec 2025-11-25 · Streamable HTTP · 13 tools`
-(grouped by what the user is doing; this is the live `tools/list`, printable any
-time with `python scripts/show_mcp_tools.py`):
+#### MCP tools exposed
+`MCP spec 2025-11-25 · Streamable HTTP · 13 tools` — grouped by what the user is
+doing; this is the live `tools/list`, printable any time with
+`python scripts/show_mcp_tools.py`:
 
 ```text
 Discover
