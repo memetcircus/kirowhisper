@@ -135,41 +135,41 @@ nuance and by a human for anything uncertain.
 ## Architecture
 
 ```mermaid
-graph TD
+graph LR
     User["🗣️ You (voice)"]
     Echo["🔵 Echo Dot Max<br/>(Alexa+)"]
 
     subgraph AWS ["AWS — Alexa+ path"]
+        direction TB
         Skill["Alexa Skill (Lambda)"]
-        Agent["Bedrock AgentCore agent — the Alexa+ MCP client<br/>(Strands + Nova, from alexa-skill-mcp-bridge;<br/>stands in for the not-yet-public Alexa+ MCP add-on)"]
+        Agent["Bedrock AgentCore agent<br/>— the Alexa+ MCP client<br/>(Strands + Nova, from<br/>alexa-skill-mcp-bridge;<br/>stands in for the<br/>not-yet-public Alexa+ MCP add-on)"]
+        Skill --> Agent
     end
 
     subgraph Local ["Your machine — KiroWhisper MCP server (Streamable HTTP, stateless)"]
-        Ambient["Ambient engine<br/>(three buckets: pass / block / surface)"]
+        direction TB
+        Ambient["Ambient engine<br/>(three buckets:<br/>pass / block / surface)"]
         Risk["Risk classifier<br/>(deterministic rules → Bedrock)"]
         Summ["Summarizer<br/>(voice-friendly, Bedrock + fallback)"]
         Audit["Audit log<br/>(every decision)"]
         GW["Gateway client"]
+        Ambient --> Risk
+        Ambient --> Summ
+        Ambient --> Audit
+        Ambient --> GW
     end
 
     Bedrock["☁️ Amazon Bedrock<br/>(Nova, us-east-1)"]
     Crew["🤖 Kiro Crew Gateway<br/>(localhost:5476)"]
 
-    User -->|"speech"| Echo
+    User -->|"speech / voice"| Echo
     Echo -->|"turn"| Skill
-    Skill --> Agent
     Agent -->|"MCP tool call<br/>(HTTPS tunnel)"| Ambient
-    Ambient --> Risk
-    Ambient --> Summ
-    Ambient --> Audit
-    Ambient --> GW
+    Ambient -.->|"spoken reply"| Agent
+    Agent -.->|"voice"| Echo
     Risk -.->|"ambiguous only"| Bedrock
     Summ -.-> Bedrock
     GW -->|"status / approvals /<br/>approve / reject"| Crew
-    Ambient -->|"spoken reply"| Agent
-    Agent --> Skill
-    Skill --> Echo
-    Echo -->|"voice"| User
 ```
 
 **Data flow.**
