@@ -135,22 +135,22 @@ nuance and by a human for anything uncertain.
 ## Architecture
 
 ```mermaid
-graph LR
+graph TB
     User["🗣️ You (voice)"]
-    Echo["🔵 Echo Dot Max<br/>(Alexa+)"]
+    Echo["🔵 Echo Dot Max (Alexa+)"]
 
     subgraph AWS ["AWS — Alexa+ path"]
-        direction TB
+        direction LR
         Skill["Alexa Skill (Lambda)"]
-        Agent["Bedrock AgentCore agent<br/>— the Alexa+ MCP client<br/>(Strands + Nova, from<br/>alexa-skill-mcp-bridge;<br/>stands in for the<br/>not-yet-public Alexa+ MCP add-on)"]
+        Agent["Bedrock AgentCore agent — the Alexa+ MCP client<br/>(Strands + Nova, from alexa-skill-mcp-bridge;<br/>stands in for the not-yet-public Alexa+ MCP add-on)"]
         Skill --> Agent
     end
 
     subgraph Local ["Your machine — KiroWhisper MCP server (Streamable HTTP, stateless)"]
-        direction TB
+        direction LR
         Ambient["Ambient engine<br/>(three buckets:<br/>pass / block / surface)"]
-        Risk["Risk classifier<br/>(deterministic rules → Bedrock)"]
-        Summ["Summarizer<br/>(voice-friendly, Bedrock + fallback)"]
+        Risk["Risk classifier<br/>(deterministic<br/>rules → Bedrock)"]
+        Summ["Summarizer<br/>(voice-friendly,<br/>Bedrock + fallback)"]
         Audit["Audit log<br/>(every decision)"]
         GW["Gateway client"]
         Ambient --> Risk
@@ -159,17 +159,17 @@ graph LR
         Ambient --> GW
     end
 
-    Bedrock["☁️ Amazon Bedrock<br/>(Nova, us-east-1)"]
-    Crew["🤖 Kiro Crew Gateway<br/>(localhost:5476)"]
+    Bedrock["☁️ Amazon Bedrock (Nova, us-east-1)"]
+    Crew["🤖 Kiro Crew Gateway (localhost:5476)"]
 
     User -->|"speech / voice"| Echo
     Echo -->|"turn"| Skill
-    Agent -->|"MCP tool call<br/>(HTTPS tunnel)"| Ambient
+    Agent -->|"MCP tool call (HTTPS tunnel)"| Ambient
     Ambient -.->|"spoken reply"| Agent
     Agent -.->|"voice"| Echo
     Risk -.->|"ambiguous only"| Bedrock
     Summ -.-> Bedrock
-    GW -->|"status / approvals /<br/>approve / reject"| Crew
+    GW -->|"status / approvals / approve / reject"| Crew
 ```
 
 **Data flow.**
