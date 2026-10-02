@@ -436,11 +436,60 @@ task attempted · steps · expected vs actual · severity · workaround · sugge
   never mind) that the platform maps to StopIntent would make voice skills feel more
   natural without each skill re-implementing it.
 
+### F23 — The Gateway token expired on a long-running server and every call started returning 403
+- **Task:** Run a live demo hours after starting the MCP server, having left the server
+  and tunnel up overnight.
+- **Steps:** Server fetched a Crew token (`kirocrew token`) once at startup and reused it.
+  During the demo, "which task failed" and other tools suddenly spoke "I can't reach the
+  crew / forbidden." Checked the server log: `GET /api/approvals?token=… → 403 Forbidden`,
+  and the token's `exp` claim was a timestamp from the previous day.
+- **Expected:** A long-lived server keeps reaching the Gateway, refreshing the token as
+  needed.
+- **Actual:** The Crew token is short-lived (JWT `exp`), and our client cached the one it
+  got at startup without refreshing, so once it expired the Gateway rejected every call
+  with 403. The tool call "succeeded" at the MCP layer but the spoken answer carried a
+  "forbidden" error, which is confusing mid-demo. Restarting the server (which re-runs
+  `kirocrew token`) fixed it instantly.
+- **Severity:** Medium (silent until it bites; a demo-killer if it bites on camera, but
+  trivially recoverable by restart).
+- **Workaround:** Restart the server before a session so it holds a fresh token.
+- **Suggestion:** The client should refresh the token on demand — re-run the token
+  command (or re-read it) when a Gateway call returns 401/403 and retry once, rather than
+  trusting a single startup fetch for the life of the process. A documented token TTL on
+  the Gateway side would also let a client refresh proactively before expiry.
+
+### F24 — On the real Echo, the confirm reply kept its meaning but dropped the "?", so the bridge closed the mic
+- **Task:** Complete the two-step voice approval on the Echo Dot Max after the F21 fix.
+- **Steps:** Said "approve it". The agent's confirm reply was now correct in substance —
+  it explicitly asked the user to **say "yes"** — but the model phrased it as a statement
+  ("…please say yes to confirm.") with no trailing "?". The bridge's `endsWithQuestion`
+  helper only treats a reply ending in "?" as "keep the mic open", so it closed the
+  session and the user couldn't say "yes".
+- **Expected:** A reply that explicitly asks the user to say yes/no keeps the mic open.
+- **Actual:** `endsWithQuestion` tested `/\?\s*$/` only. A confirmation worded as a
+  statement ("say yes to confirm.") failed the test, the bridge set
+  `shouldEndSession = true`, and the mic closed mid-confirmation — the exact failure
+  class F15/F21 warned about, now triggered by the *absence of a question mark* rather
+  than a reworded sentence.
+- **Severity:** High (the core safety action was again uncompletable by voice on the
+  device).
+- **Workaround / fix:** Widened `endsWithQuestion` in the bridge
+  (`packages/agent/src/speech.ts`) to also return true when the reply explicitly invites
+  a spoken yes/no (matches `say "yes"`/`say "no"`), so a confirmation prompt keeps the mic
+  open even without a "?". Added unit tests covering the confirm phrasings and guarding
+  against false positives like "The task is continuing." (7 tests pass). This lives in our
+  bridge fork and is a general improvement, not KiroWhisper-specific. Verified end-to-end
+  on the Echo Dot Max: "approve it" → mic stayed open → "yes" reached the skill → the file
+  was deleted (confirmed in the audit log).
+- **Suggestion:** Same root cause as F15/F21 — inferring "keep the session open" from a
+  trailing "?" is brittle. A first-class "this reply expects an answer" flag on the tool
+  result (or recognizing yes/no confirmation intent) would retire this whole class of bug.
+
 ---
 
 ## Severity tally
-- High: F1, F2, F8, F11, F12, F13, F14, F15, F17, F21
-- Medium: F3, F4, F5, F7, F9, F10, F18, F19
+- High: F1, F2, F8, F11, F12, F13, F14, F15, F17, F21, F24
+- Medium: F3, F4, F5, F7, F9, F10, F18, F19, F23
 - Low: F6, F16, F20, F22
 
 Most frictions were about **discovery** (how to talk to the Gateway, which action
@@ -479,5 +528,11 @@ there is no polite spoken close, only the platform's "stop" (F22 — left as a c
 decision). The throughline across F13–F22: the moment a generative model sits between
 your tool and the speaker, never trust it to preserve wording, keep a turn open, or
 relay a value — make the safety-critical behavior deterministic and verify the real
-effect at the source. The whole flow, including the two-step approval, was ultimately
+effect at the source. F23–F24 surfaced during the final on-device
+demo rehearsals and reinforce the same lessons from fresh angles: a long-lived server
+must refresh its Gateway token rather than trust one startup fetch (F23 — an expired JWT
+turned every call into a silent 403), and the "keep the mic open" decision must not hinge
+on a trailing "?" (F24 — a correctly worded confirmation phrased as a statement still
+closed the session, fixed in our bridge fork by recognizing a spoken yes/no prompt).
+The whole flow, including the two-step approval, was ultimately
 verified end-to-end on a real Echo Dot Max, with the deletion confirmed in the audit log.
